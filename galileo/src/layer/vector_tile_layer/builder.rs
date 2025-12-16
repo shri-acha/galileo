@@ -458,6 +458,8 @@ impl VectorTileLayerBuilder {
             rules: vec![
                 StyleRule {
                     layer_name: None,
+                    max_resolution: None,
+                    min_resolution: None,
                     properties: Default::default(),
                     symbol: VectorTileSymbol::Line(VectorTileLineSymbol {
                         width: 1.0,
@@ -466,6 +468,8 @@ impl VectorTileLayerBuilder {
                 },
                 StyleRule {
                     layer_name: None,
+                    max_resolution: None,
+                    min_resolution: None,
                     properties: Default::default(),
                     symbol: VectorTileSymbol::Polygon(VectorTilePolygonSymbol {
                         fill_color: Color::GRAY,

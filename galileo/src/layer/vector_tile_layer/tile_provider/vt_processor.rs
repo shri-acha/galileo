@@ -59,7 +59,7 @@ impl VtProcessor {
 
         for layer in mvt_tile.layers.iter().rev() {
             for feature in &layer.features {
-                let Some(rule) = style.get_style_rule(&layer.name, feature) else {
+                let Some(rule) = style.get_style_rule(&layer.name, lod_resolution, feature) else {
                     continue;
                 };
 

@@ -50,9 +50,7 @@ impl TileSchema {
         } else {
             None
         }
-    }
-
-    /// Width of a single tile.
+    } /// Width of a single tile.
     pub fn tile_width(&self) -> u32 {
         self.tile_width
     }
