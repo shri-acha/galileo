@@ -43,7 +43,7 @@ pub(crate) fn run() {
     let labels_style = VectorTileStyle {
         rules: vec![StyleRule {
             layer_name: None,
-            max_resolution:None,
+            max_resolution: None,
             min_resolution: None,
             properties: Default::default(),
             symbol: VectorTileSymbol::Label(VectorTileLabelSymbol {

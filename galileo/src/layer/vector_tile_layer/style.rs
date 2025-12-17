@@ -23,7 +23,12 @@ pub struct VectorTileStyle {
 
 impl VectorTileStyle {
     /// Get a rule for the given feature.
-    pub fn get_style_rule(&self, layer_name: &str,resolution_level: f64, feature: &MvtFeature) -> Option<&StyleRule> {
+    pub fn get_style_rule(
+        &self,
+        layer_name: &str,
+        resolution: f64,
+        feature: &MvtFeature,
+    ) -> Option<&StyleRule> {
         self.rules.iter().find(|&rule| {
             let correct_geometry_type = match feature.geometry {
                 MvtGeometry::Point(_)
@@ -50,10 +55,10 @@ impl VectorTileStyle {
             if rule.layer_name.as_ref().is_some_and(|v| v != layer_name) {
                 return false;
             }
-            if rule.max_resolution.is_some_and(|v| v < resolution_level) {
+            if rule.max_resolution.is_some_and(|v| v < resolution) {
                 return false;
             }
-            if rule.min_resolution.is_some_and(|v| v > resolution_level) {
+            if rule.min_resolution.is_some_and(|v| v > resolution) {
                 return false;
             }
 
@@ -108,9 +113,9 @@ fn compare_numeric(a: &galileo_mvt::MvtValue, b: &str, cmp: impl Fn(f64, f64) ->
 pub struct StyleRule {
     /// If set, a feature must belong to the set layer. If not set, layer is not checked.
     pub layer_name: Option<String>,
-    /// Determins the maximum resolution
+    /// If set, the rule will only be applied at resolutions lower than this value.
     pub max_resolution: Option<f64>,
-    /// Determins the minimum resolution 
+    /// If set, the rule will only be applied at resolutions higher than this value.
     pub min_resolution: Option<f64>,
     /// Specifies a set of attributes of a feature that must have the given values for this rule to be applied.
     #[serde(default)]
@@ -341,8 +346,8 @@ mod tests {
     fn serialize_with_bincode() {
         let rule = StyleRule {
             layer_name: None,
-            min_resolution:None,
-            max_resolution:None,
+            min_resolution: None,
+            max_resolution: None,
             properties: vec![],
             symbol: VectorTileSymbol::None,
         };
