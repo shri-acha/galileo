@@ -7,6 +7,7 @@ use crate::render::point_paint::PointPaint;
 use crate::render::text::TextStyle;
 use crate::render::{LineCap, LinePaint, PolygonPaint};
 use crate::Color;
+use crate::layer::VectorTileLayer::expressions;
 
 /// Style of a vector tile layer. This specifies how each feature in a tile should be rendered.
 ///
