@@ -3,7 +3,8 @@
 use galileo_mvt::{MvtFeature, MvtGeometry};
 use serde::{Deserialize, Serialize};
 
-use crate::layer::vector_tile_layer::expressions;
+use crate::error::GalileoError;
+use crate::layer::vector_tile_layer::expressions::{InterpolateContext, StepContext, StyleValue};
 use crate::render::point_paint::PointPaint;
 use crate::render::text::TextStyle;
 use crate::render::{LineCap, LinePaint, PolygonPaint};
@@ -302,16 +303,22 @@ impl From<VectorTileLineSymbol> for LinePaint {
 }
 
 /// Symbol for polygon geometries.
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VectorTilePolygonSymbol {
     /// Color of the fill of polygon.
-    pub fill_color: Color,
+    pub fill_color: StyleValue<Color>,
 }
 
-impl From<VectorTilePolygonSymbol> for PolygonPaint {
-    fn from(value: VectorTilePolygonSymbol) -> Self {
-        Self {
-            color: value.fill_color,
+impl VectorTilePolygonSymbol {
+    pub(crate) fn to_paint(&self, current_resolution: f64) -> Result<PolygonPaint, GalileoError> {
+        match &self.fill_color {
+            StyleValue::Simple(color) => Ok(PolygonPaint { color: *color }),
+            StyleValue::Interpolate(expression) => Ok(PolygonPaint {
+                color: expression.get_value(InterpolateContext { current_resolution })?,
+            }),
+            StyleValue::Steps(expression) => Ok(PolygonPaint {
+                color: expression.get_value(StepContext { current_resolution })?,
+            }),
         }
     }
 }

@@ -107,7 +107,8 @@ impl VtProcessor {
                         }
                     }
                     MvtGeometry::Polygon(polygons) => {
-                        if let Some(paint) = Self::get_polygon_symbol(rule, feature) {
+                        if let Some(paint) = Self::get_polygon_symbol(rule, lod_resolution, feature)
+                        {
                             for polygon in polygons.polygons() {
                                 bundle.add_polygon(
                                     &Self::transform_polygon(polygon, tile_resolution),
@@ -162,8 +163,15 @@ impl VtProcessor {
         rule.symbol.line().map(|&s| s.into())
     }
 
-    fn get_polygon_symbol(rule: &StyleRule, _feature: &MvtFeature) -> Option<PolygonPaint> {
-        rule.symbol.polygon().map(|&s| s.into())
+    fn get_polygon_symbol(
+        rule: &StyleRule,
+        resolution: f64,
+        _feature: &MvtFeature,
+    ) -> Option<PolygonPaint> {
+        rule.symbol
+            .polygon()
+            .map(|s| s.to_paint(resolution).ok())
+            .flatten()
     }
 
     fn transform_polygon(mvt_polygon: &MvtPolygon, tile_resolution: f64) -> Polygon<Point3> {

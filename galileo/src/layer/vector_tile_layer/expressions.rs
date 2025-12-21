@@ -1,20 +1,24 @@
 use core::f64;
-use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
 
 use crate::error::GalileoError;
 use crate::Color;
 
 /// Context for Step
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct StepContext {
     pub current_resolution: f64,
 }
 
 /// Context for the interpolation
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct InterpolateContext {
     pub current_resolution: f64,
 }
 
 /// Type used to define expressions for interpolation
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct InterpolateExpression<T> {
     start_value: T,
     end_value: T,
@@ -24,15 +28,17 @@ pub struct InterpolateExpression<T> {
     interpolation_args: Option<Vec<i32>>,
 }
 /// Type used to define steps
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct StepExpression<T> {
     default_value: T,
     /// Each stop value maps the resolution to the T type
     /// If, the current resolution is greater than stop resolution
     /// the value T maps to the T value where the stop resolution is
     /// less than that of current resolution.
-    stop_values: BTreeMap<f64, T>,
+    stop_values_resolution: Vec<f64>,
+    stop_values_type: Vec<T>,
 }
-
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum Interpolation {
     /// Linear interpolation type with base 1
     Linear,
@@ -42,6 +48,7 @@ pub enum Interpolation {
     Cubic,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub enum StyleValue<T> {
     Simple(T),
     Interpolate(InterpolateExpression<T>),
@@ -70,7 +77,6 @@ impl InterpolateExpression<Color> {
         }
     }
     fn lerp(&self, current_resolution: f64) -> Result<Color, GalileoError> {
-
         match (self.max_resolution, self.min_resolution) {
             (Some(max_resolution), Some(min_resolution)) => {
                 const EPS: f64 = 10e-6;
@@ -95,5 +101,10 @@ impl InterpolateExpression<Color> {
                 "Unexpectedly missing resolution configurations!".to_string(),
             ))?,
         }
+    }
+}
+impl StepExpression<Color> {
+    pub fn get_value(&self, _context: StepContext) -> Result<Color, GalileoError> {
+        Ok(Color::BLACK)
     }
 }
