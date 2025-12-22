@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Color representation.
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(from = "String", into = "String"))]
 pub struct Color {

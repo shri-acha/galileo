@@ -314,10 +314,10 @@ impl VectorTilePolygonSymbol {
         match &self.fill_color {
             StyleValue::Simple(color) => Ok(PolygonPaint { color: *color }),
             StyleValue::Interpolate(expression) => Ok(PolygonPaint {
-                color: expression.get_value(InterpolateContext { current_resolution })?,
+                color: expression.get_value(current_resolution)?,
             }),
             StyleValue::Steps(expression) => Ok(PolygonPaint {
-                color: expression.get_value(StepContext { current_resolution })?,
+                color: expression.get_value(current_resolution)?,
             }),
         }
     }
