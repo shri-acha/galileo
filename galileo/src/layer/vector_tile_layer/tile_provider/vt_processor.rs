@@ -168,10 +168,7 @@ impl VtProcessor {
         resolution: f64,
         _feature: &MvtFeature,
     ) -> Option<PolygonPaint> {
-        rule.symbol
-            .polygon()
-            .map(|s| s.to_paint(resolution).ok())
-            .flatten()
+        rule.symbol.polygon().map(|s| s.to_paint(resolution))?
     }
 
     fn transform_polygon(mvt_polygon: &MvtPolygon, tile_resolution: f64) -> Polygon<Point3> {

@@ -4,7 +4,7 @@ use galileo_mvt::{MvtFeature, MvtGeometry};
 use serde::{Deserialize, Serialize};
 
 use crate::error::GalileoError;
-use crate::layer::vector_tile_layer::expressions::{InterpolateContext, StepContext, StyleValue};
+use crate::layer::vector_tile_layer::expressions::{InterpolateContext, StyleValue};
 use crate::render::point_paint::PointPaint;
 use crate::render::text::TextStyle;
 use crate::render::{LineCap, LinePaint, PolygonPaint};
@@ -310,13 +310,13 @@ pub struct VectorTilePolygonSymbol {
 }
 
 impl VectorTilePolygonSymbol {
-    pub(crate) fn to_paint(&self, current_resolution: f64) -> Result<PolygonPaint, GalileoError> {
+    pub(crate) fn to_paint(&self, current_resolution: f64) -> Option<PolygonPaint> {
         match &self.fill_color {
-            StyleValue::Simple(color) => Ok(PolygonPaint { color: *color }),
-            StyleValue::Interpolate(expression) => Ok(PolygonPaint {
+            StyleValue::Simple(color) => Some(PolygonPaint { color: *color }),
+            StyleValue::Interpolate(expression) => Some(PolygonPaint {
                 color: expression.get_value(current_resolution)?,
             }),
-            StyleValue::Steps(expression) => Ok(PolygonPaint {
+            StyleValue::Steps(expression) => Some(PolygonPaint {
                 color: expression.get_value(current_resolution)?,
             }),
         }
