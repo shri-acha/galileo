@@ -31,10 +31,6 @@ pub struct StepValue<T> {
 /// Type used to define expressions for interpolation
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct InterpolateExpression<T> {
-    start_value: T,
-    end_value: T,
-    max_resolution: Option<f64>,
-    min_resolution: Option<f64>,
     interpolation_type: Interpolation,
     interpolation_args: InterpolationArgs<T>,
 }
@@ -53,8 +49,8 @@ pub struct StepExpression<T> {
 pub struct ResolutionValueRange<T> {
     max_resolution: f64,
     min_resolution: f64,
-    start_value: T,
-    end_value: T,
+    start_value: Option<T>,
+    end_value: Option<T>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -97,30 +93,42 @@ impl InterpolateExpression<Color> {
             self.get_resolution_value_range(current_resolution);
 
         if let Some(resolution_value_range) = resolution_value_range {
-            match self.interpolation_type {
-                Interpolation::Linear => {
-                    let interpolated_color: Color = Self::lerp(
-                        resolution_value_range.start_value,
-                        resolution_value_range.end_value,
-                        Some(resolution_value_range.min_resolution),
-                        Some(resolution_value_range.max_resolution),
-                        current_resolution,
-                    )?;
-                    Some(interpolated_color)
-                }
-                Interpolation::Exponential => {
-                    let interpolated_color: Color = Self::exponential_interpolate(
-                        resolution_value_range.start_value,
-                        resolution_value_range.end_value,
-                        Some(resolution_value_range.min_resolution),
-                        Some(resolution_value_range.max_resolution),
-                        &self.interpolation_args,
-                        current_resolution,
-                    )?;
-                    Some(interpolated_color)
-                }
-                Interpolation::Cubic => {
-                    todo!()
+            if current_resolution == resolution_value_range.max_resolution {
+                return resolution_value_range.start_value;
+            } else if current_resolution == resolution_value_range.min_resolution {
+                return resolution_value_range.end_value;
+            } else {
+                match self.interpolation_type {
+                    Interpolation::Linear => {
+                        let interpolated_color: Color = Self::lerp(
+                            resolution_value_range.start_value?,
+                            resolution_value_range.end_value?,
+                            Some(resolution_value_range.min_resolution),
+                            Some(resolution_value_range.max_resolution),
+                            current_resolution,
+                        )?;
+                        Some(interpolated_color)
+                    }
+                    Interpolation::Exponential => {
+                        let interpolated_color: Color = Self::exponential_interpolate(
+                            resolution_value_range.start_value?,
+                            resolution_value_range.end_value?,
+                            Some(resolution_value_range.min_resolution),
+                            Some(resolution_value_range.max_resolution),
+                            &self.interpolation_args,
+                            current_resolution,
+                        )?;
+                        Some(interpolated_color)
+                    }
+                    Interpolation::Cubic => {
+                        let interpolated_color: Color = Self::cubic_interpolate(
+                            Some(resolution_value_range.min_resolution),
+                            Some(resolution_value_range.max_resolution),
+                            &self.interpolation_args,
+                            current_resolution,
+                        )?;
+                        Some(interpolated_color)
+                    }
                 }
             }
         } else {
@@ -200,7 +208,6 @@ impl InterpolateExpression<Color> {
     }
 
     fn cubic_interpolate(
-        step_values: Vec<&StepValue<Color>>,
         min_resolution: Option<f64>,
         max_resolution: Option<f64>,
         interpolation_args: &InterpolationArgs<Color>,
@@ -213,13 +220,6 @@ impl InterpolateExpression<Color> {
         &self,
         current_resolution: f64,
     ) -> Option<ResolutionValueRange<Color>> {
-        // checks if within the min/max bounds
-        if let (Some(min_res), Some(max_res)) = (self.min_resolution, self.max_resolution) {
-            if current_resolution < min_res || current_resolution > max_res {
-                return None;
-            }
-        }
-
         let step_values = self.interpolation_args.step_values.as_ref()?;
 
         // Try to find a matching window in step_values
@@ -229,36 +229,32 @@ impl InterpolateExpression<Color> {
             return Some(ResolutionValueRange {
                 min_resolution: window[0].resolution,
                 max_resolution: window[1].resolution,
-                start_value: window[0].step_value,
-                end_value: window[1].step_value,
+                start_value: Some(window[0].step_value),
+                end_value: Some(window[1].step_value),
             });
         }
 
         // If not found in step_values, check if before the first step
         if let Some(first_step) = step_values.first() {
-            if let Some(min_res) = self.min_resolution {
-                if current_resolution >= min_res && current_resolution <= first_step.resolution {
-                    return Some(ResolutionValueRange {
-                        min_resolution: min_res,
-                        max_resolution: first_step.resolution,
-                        start_value: self.start_value,
-                        end_value: first_step.step_value,
-                    });
-                }
+            if current_resolution <= first_step.resolution {
+                return Some(ResolutionValueRange {
+                    min_resolution: current_resolution,
+                    max_resolution: first_step.resolution,
+                    start_value: None,
+                    end_value: Some(first_step.step_value),
+                });
             }
         }
 
         // If not found in step_values, check if after last step
         if let Some(last_step) = step_values.last() {
-            if let Some(max_res) = self.max_resolution {
-                if current_resolution >= last_step.resolution && current_resolution <= max_res {
-                    return Some(ResolutionValueRange {
-                        min_resolution: last_step.resolution,
-                        max_resolution: max_res,
-                        start_value: last_step.step_value,
-                        end_value: self.end_value,
-                    });
-                }
+            if current_resolution >= last_step.resolution {
+                return Some(ResolutionValueRange {
+                    min_resolution: last_step.resolution,
+                    max_resolution: current_resolution,
+                    start_value: Some(last_step.step_value),
+                    end_value: None,
+                });
             }
         }
 
@@ -295,10 +291,6 @@ mod tests {
     #[test]
     fn test_get_resolution_value_range_out_of_bounds() {
         let expr = InterpolateExpression {
-            start_value: Color::rgba(0, 0, 0, 0),
-            end_value: Color::rgba(255, 255, 255, 255),
-            min_resolution: Some(0.0),
-            max_resolution: Some(100.0),
             interpolation_type: Interpolation::Linear,
             interpolation_args: InterpolationArgs {
                 base: None,
@@ -322,16 +314,12 @@ mod tests {
     #[test]
     fn linear_interpolation_bounds() {
         let expr = InterpolateExpression {
-            start_value: Color::rgba(0, 0, 0, 0),
-            end_value: Color::rgba(255, 255, 255, 255),
-            min_resolution: Some(50.0),
-            max_resolution: Some(100.0),
             interpolation_type: Interpolation::Linear,
             interpolation_args: InterpolationArgs {
                 base: None,
                 step_values: Some(vec![
                     StepValue {
-                        resolution: 0.0,
+                        resolution: 25.0,
                         step_value: Color::rgba(0, 0, 0, 0),
                     },
                     StepValue {
@@ -341,16 +329,12 @@ mod tests {
                 ]),
             },
         };
-        assert_eq!(expr.get_value(25.0), None);
-        assert_eq!(expr.get_value(150.0), None);
+        assert_eq!(expr.get_value(20.0), Some(Color::rgba(0, 0, 0, 0)));
+        assert_eq!(expr.get_value(150.0), Some(Color::rgba(128, 128, 128, 128)));
     }
     #[test]
     fn linear_interpolation() {
         let expr = InterpolateExpression {
-            start_value: Color::rgba(0, 0, 0, 0),
-            end_value: Color::rgba(255, 255, 255, 255),
-            min_resolution: Some(0.0),
-            max_resolution: Some(100.0),
             interpolation_type: Interpolation::Linear,
             interpolation_args: InterpolationArgs {
                 base: None,
@@ -369,18 +353,14 @@ mod tests {
         assert_eq!(expr.get_value(25.0), Some(Color::rgba(64, 64, 64, 64)));
     }
     #[test]
-    fn test_exponential_bounds() {
+    fn exponential_bounds() {
         let expr = InterpolateExpression {
-            start_value: Color::rgba(0, 0, 0, 0),
-            end_value: Color::rgba(255, 255, 255, 255),
-            min_resolution: Some(50.0),
-            max_resolution: Some(100.0),
             interpolation_type: Interpolation::Exponential,
             interpolation_args: InterpolationArgs {
                 base: Some(2),
                 step_values: Some(vec![
                     StepValue {
-                        resolution: 0.0,
+                        resolution: 10.0,
                         step_value: Color::rgba(0, 0, 0, 0),
                     },
                     StepValue {
@@ -390,17 +370,13 @@ mod tests {
                 ]),
             },
         };
-        assert_eq!(expr.get_value(5.0), None);
-        assert_eq!(expr.get_value(150.0), None);
+        assert_eq!(expr.get_value(5.0), Some(Color::rgba(0, 0, 0, 0)));
+        assert_eq!(expr.get_value(150.0), Some(Color::rgba(128, 128, 128, 128)));
     }
 
     #[test]
     fn exponential_interpolation() {
         let expr = InterpolateExpression {
-            start_value: Color::rgba(0, 0, 0, 0),
-            end_value: Color::rgba(255, 255, 255, 255),
-            min_resolution: Some(10.0),
-            max_resolution: Some(100.0),
             interpolation_type: Interpolation::Exponential,
             interpolation_args: InterpolationArgs {
                 base: Some(2),
