@@ -4,7 +4,7 @@ use galileo_mvt::{MvtFeature, MvtGeometry};
 use serde::{Deserialize, Serialize};
 
 use crate::error::GalileoError;
-use crate::layer::vector_tile_layer::expressions::{InterpolateContext, StyleValue};
+use crate::layer::vector_tile_layer::expressions::StyleValue;
 use crate::render::point_paint::PointPaint;
 use crate::render::text::TextStyle;
 use crate::render::{LineCap, LinePaint, PolygonPaint};

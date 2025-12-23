@@ -6,24 +6,26 @@ use crate::Color;
 /// Arguments for exponential interpolation
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LinearArgs<T> {
-    step_values: Vec<StepValue<T>>,
+    step_values: Option<Vec<StepValue<T>>>,
+}
+
+/// Arguments for exponential interpolation
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StepArgs<T> {
+    step_values: Option<Vec<StepValue<T>>>,
 }
 
 /// Generic arguments for interpolation
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct InterpolationArgs<T> {
     base: Option<i32>,
+    /// Step values is internally sorted
     step_values: Option<Vec<StepValue<T>>>,
 }
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct StepValue<T> {
     resolution: f64,
     step_value: T,
-}
-/// Context for the interpolation
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct InterpolateContext {
-    pub current_resolution: f64,
 }
 
 /// Type used to define expressions for interpolation
@@ -37,18 +39,17 @@ pub struct InterpolateExpression<T> {
     interpolation_args: InterpolationArgs<T>,
 }
 /// Type used to define steps
-#[derive(Clone, Debug, Serialize, Deserialize, PartialOrd, PartialEq)]
-pub struct StepExpression<T: Ord> {
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct StepExpression<T> {
     default_value: T,
     /// Each stop value maps the resolution to the T type
     /// If, the current resolution is greater than step resolution
     /// the value T maps to the T value where the step resolution is
     /// less than that of current resolution.
-    step_resolution: Vec<f64>,
-    step_value_: Vec<T>,
+    step_values: Option<Vec<StepValue<T>>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialOrd, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ResolutionValueRange<T> {
     max_resolution: f64,
     min_resolution: f64,
@@ -56,7 +57,7 @@ pub struct ResolutionValueRange<T> {
     end_value: T,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialOrd, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ValueStep<T> {
     resolution: f64,
     value: T,
@@ -84,7 +85,7 @@ pub enum StyleValue<T: Ord> {
 
 impl Color {
     /// Evaluates value from simple color
-    pub fn get_value(&self, _: InterpolateContext) -> Result<Color, GalileoError> {
+    pub fn get_value(&self) -> Result<Color, GalileoError> {
         Ok(*self)
     }
 }
@@ -101,7 +102,6 @@ impl InterpolateExpression<Color> {
                     let interpolated_color: Color = Self::lerp(
                         resolution_value_range.start_value,
                         resolution_value_range.end_value,
-                        &self.interpolation_args,
                         Some(resolution_value_range.min_resolution),
                         Some(resolution_value_range.max_resolution),
                         current_resolution,
@@ -110,10 +110,10 @@ impl InterpolateExpression<Color> {
                 }
                 Interpolation::Exponential => {
                     let interpolated_color: Color = Self::exponential_interpolate(
-                        self.start_value,
-                        self.end_value,
-                        self.min_resolution,
-                        self.max_resolution,
+                        resolution_value_range.start_value,
+                        resolution_value_range.end_value,
+                        Some(resolution_value_range.min_resolution),
+                        Some(resolution_value_range.max_resolution),
                         &self.interpolation_args,
                         current_resolution,
                     )?;
@@ -131,7 +131,6 @@ impl InterpolateExpression<Color> {
     fn lerp(
         start_value: Color,
         end_value: Color,
-        interpolation_args: &InterpolationArgs<Color>,
         min_resolution: Option<f64>,
         max_resolution: Option<f64>,
         current_resolution: f64,
@@ -201,7 +200,7 @@ impl InterpolateExpression<Color> {
     }
 
     fn cubic_interpolate(
-        step_value: Vec<&StepValue<Color>>,
+        step_values: Vec<&StepValue<Color>>,
         min_resolution: Option<f64>,
         max_resolution: Option<f64>,
         interpolation_args: &InterpolationArgs<Color>,
@@ -270,8 +269,24 @@ impl InterpolateExpression<Color> {
 impl StepExpression<Color> {
     /// Evaluates color value by giving stepwise value
     /// of color on basis of zoom
-    pub fn get_value(&self, _resolution: f64) -> Option<Color> {
-        Some(Color::BLACK)
+    pub fn get_value(&self, current_resolution: f64) -> Option<Color> {
+        if let Some(step_values) = self.step_values.as_ref() {
+            if step_values.len() < 1 {
+                return None;
+            }
+            // Value when
+            if let Some(w) = step_values.windows(2).find(|w| {
+                current_resolution >= w[0].resolution && current_resolution <= w[1].resolution
+            }) {
+                return Some(w[0].step_value);
+            } else if current_resolution < step_values[0].resolution {
+                return Some(self.default_value);
+            } else {
+                return Some(step_values[step_values.len() - 1].step_value);
+            }
+        } else {
+            return None;
+        }
     }
 }
 #[cfg(test)]
@@ -303,8 +318,34 @@ mod tests {
         let range = expr.get_resolution_value_range(75.0);
         assert!(range.is_some());
     }
+
     #[test]
-    fn test_lerp() {
+    fn linear_interpolation_bounds() {
+        let expr = InterpolateExpression {
+            start_value: Color::rgba(0, 0, 0, 0),
+            end_value: Color::rgba(255, 255, 255, 255),
+            min_resolution: Some(50.0),
+            max_resolution: Some(100.0),
+            interpolation_type: Interpolation::Linear,
+            interpolation_args: InterpolationArgs {
+                base: None,
+                step_values: Some(vec![
+                    StepValue {
+                        resolution: 0.0,
+                        step_value: Color::rgba(0, 0, 0, 0),
+                    },
+                    StepValue {
+                        resolution: 50.0,
+                        step_value: Color::rgba(128, 128, 128, 128),
+                    },
+                ]),
+            },
+        };
+        assert_eq!(expr.get_value(25.0), None);
+        assert_eq!(expr.get_value(150.0), None);
+    }
+    #[test]
+    fn linear_interpolation() {
         let expr = InterpolateExpression {
             start_value: Color::rgba(0, 0, 0, 0),
             end_value: Color::rgba(255, 255, 255, 255),
@@ -328,11 +369,11 @@ mod tests {
         assert_eq!(expr.get_value(25.0), Some(Color::rgba(64, 64, 64, 64)));
     }
     #[test]
-    fn test_exp_interpolation() {
+    fn test_exponential_bounds() {
         let expr = InterpolateExpression {
             start_value: Color::rgba(0, 0, 0, 0),
             end_value: Color::rgba(255, 255, 255, 255),
-            min_resolution: Some(0.0),
+            min_resolution: Some(50.0),
             max_resolution: Some(100.0),
             interpolation_type: Interpolation::Exponential,
             interpolation_args: InterpolationArgs {
@@ -349,6 +390,78 @@ mod tests {
                 ]),
             },
         };
-        assert_eq!(expr.get_value(25.0), Some(Color::rgba(48, 48, 48, 48)));
+        assert_eq!(expr.get_value(5.0), None);
+        assert_eq!(expr.get_value(150.0), None);
+    }
+
+    #[test]
+    fn exponential_interpolation() {
+        let expr = InterpolateExpression {
+            start_value: Color::rgba(0, 0, 0, 0),
+            end_value: Color::rgba(255, 255, 255, 255),
+            min_resolution: Some(10.0),
+            max_resolution: Some(100.0),
+            interpolation_type: Interpolation::Exponential,
+            interpolation_args: InterpolationArgs {
+                base: Some(2),
+                step_values: Some(vec![
+                    StepValue {
+                        resolution: 0.0,
+                        step_value: Color::rgba(0, 0, 0, 0),
+                    },
+                    StepValue {
+                        resolution: 50.0,
+                        step_value: Color::rgba(128, 128, 128, 128),
+                    },
+                    StepValue {
+                        resolution: 75.0,
+                        step_value: Color::rgba(200, 200, 200, 200),
+                    },
+                ]),
+            },
+        };
+        assert_eq!(expr.get_value(25.0), Some(Color::rgba(53, 53, 53, 53)));
+        assert_eq!(expr.get_value(60.0), Some(Color::rgba(151, 151, 151, 151)));
+    }
+
+    #[test]
+    fn test_step_expression_bounds() {
+        let expr = StepExpression::<Color> {
+            default_value: Color::from_hex("#f0f0f0"),
+            step_values: Some(vec![
+                StepValue::<Color> {
+                    resolution: 10.0,
+                    step_value: Color::from_hex("#fafafa"),
+                },
+                StepValue::<Color> {
+                    resolution: 20.0,
+                    step_value: Color::from_hex("#1d1d1d"),
+                },
+            ]),
+        };
+        assert_eq!(expr.get_value(0.0), Some(Color::from_hex("#f0f0f0")));
+        assert_eq!(expr.get_value(30.0), Some(Color::from_hex("#1d1d1d")));
+    }
+    #[test]
+    fn test_step_expression() {
+        let expr = StepExpression::<Color> {
+            default_value: Color::from_hex("#f0f0f0"),
+            step_values: Some(vec![
+                StepValue::<Color> {
+                    resolution: 10.0,
+                    step_value: Color::from_hex("#fafafa"),
+                },
+                StepValue::<Color> {
+                    resolution: 20.0,
+                    step_value: Color::from_hex("#1d1d1d"),
+                },
+                StepValue::<Color> {
+                    resolution: 30.0,
+                    step_value: Color::from_hex("#1a1a1a"),
+                },
+            ]),
+        };
+        assert_eq!(expr.get_value(15.0), Some(Color::from_hex("#fafafa")));
+        assert_eq!(expr.get_value(25.0), Some(Color::from_hex("#1d1d1d")));
     }
 }
