@@ -464,7 +464,7 @@ impl VectorTileLayerBuilder {
                     properties: Default::default(),
                     symbol: VectorTileSymbol::Line(VectorTileLineSymbol {
                         width: 1.0,
-                        stroke_color: Color::BLACK,
+                        stroke_color: Color::BLACK.into(),
                     }),
                 },
                 StyleRule {
@@ -473,7 +473,7 @@ impl VectorTileLayerBuilder {
                     min_resolution: None,
                     properties: Default::default(),
                     symbol: VectorTileSymbol::Polygon(VectorTilePolygonSymbol {
-                        fill_color: StyleValue::Simple(Color::GRAY),
+                        fill_color: Color::GRAY.into(),
                     }),
                 },
             ],

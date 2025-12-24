@@ -65,7 +65,8 @@ impl VtProcessor {
 
                 match &feature.geometry {
                     MvtGeometry::Point(points) => {
-                        let Some(paint) = Self::get_point_symbol(rule, feature) else {
+                        let Some(paint) = Self::get_point_symbol(rule, lod_resolution, feature)
+                        else {
                             continue;
                         };
 
@@ -90,7 +91,7 @@ impl VtProcessor {
                         }
                     }
                     MvtGeometry::LineString(contours) => {
-                        if let Some(paint) = Self::get_line_symbol(rule, feature) {
+                        if let Some(paint) = Self::get_line_symbol(rule, lod_resolution, feature) {
                             for contour in contours.contours() {
                                 bundle.add_line(
                                     &galileo_types::impls::Contour::new(
@@ -125,11 +126,14 @@ impl VtProcessor {
         Ok(())
     }
 
-    fn get_point_symbol<'a>(rule: &'a StyleRule, feature: &MvtFeature) -> Option<PointPaint<'a>> {
+    fn get_point_symbol<'a>(
+        rule: &'a StyleRule,
+        resolution: f64,
+        feature: &MvtFeature,
+    ) -> Option<PointPaint<'a>> {
         rule.symbol
             .point()
-            .copied()
-            .map(|symbol| symbol.into())
+            .map(|symbol| symbol.to_paint(resolution))
             .or_else(|| {
                 rule.symbol
                     .label()
@@ -159,8 +163,12 @@ impl VtProcessor {
         ))
     }
 
-    fn get_line_symbol(rule: &StyleRule, _feature: &MvtFeature) -> Option<LinePaint> {
-        rule.symbol.line().map(|&s| s.into())
+    fn get_line_symbol(
+        rule: &StyleRule,
+        resolution: f64,
+        _feature: &MvtFeature,
+    ) -> Option<LinePaint> {
+        rule.symbol.line().map(|s| s.to_paint(resolution))
     }
 
     fn get_polygon_symbol(
@@ -168,7 +176,7 @@ impl VtProcessor {
         resolution: f64,
         _feature: &MvtFeature,
     ) -> Option<PolygonPaint> {
-        rule.symbol.polygon().map(|s| s.to_paint(resolution))?
+        rule.symbol.polygon().map(|s| s.to_paint(resolution))
     }
 
     fn transform_polygon(mvt_polygon: &MvtPolygon, tile_resolution: f64) -> Polygon<Point3> {

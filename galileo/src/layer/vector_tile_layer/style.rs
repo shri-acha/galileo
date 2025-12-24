@@ -268,34 +268,34 @@ impl VectorTileSymbol {
 }
 
 /// Symbol for point geometries.
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VectorTilePointSymbol {
     /// Size of the point.
     pub size: f64,
     /// Color of the point.
-    pub color: Color,
+    pub color: StyleValue<Color>,
 }
 
-impl From<VectorTilePointSymbol> for PointPaint<'_> {
-    fn from(value: VectorTilePointSymbol) -> Self {
-        PointPaint::circle(value.color, value.size as f32)
+impl VectorTilePointSymbol {
+    pub(crate) fn to_paint(&self, current_resolution: f64) -> PointPaint {
+        return PointPaint::circle(self.color.get_value(current_resolution), self.size as f32);
     }
 }
 
 /// Symbol for line geometries.
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VectorTileLineSymbol {
     /// Width of the line in pixels.
     pub width: f64,
     /// Color of the line in pixels.
-    pub stroke_color: Color,
+    pub stroke_color: StyleValue<Color>,
 }
 
-impl From<VectorTileLineSymbol> for LinePaint {
-    fn from(value: VectorTileLineSymbol) -> Self {
-        Self {
-            color: value.stroke_color,
-            width: value.width,
+impl VectorTileLineSymbol {
+    pub(crate) fn to_paint(&self, current_resolution: f64) -> LinePaint {
+        LinePaint {
+            color: self.stroke_color.get_value(current_resolution),
+            width: self.width,
             offset: 0.0,
             line_cap: LineCap::Butt,
         }
@@ -310,15 +310,9 @@ pub struct VectorTilePolygonSymbol {
 }
 
 impl VectorTilePolygonSymbol {
-    pub(crate) fn to_paint(&self, current_resolution: f64) -> Option<PolygonPaint> {
-        match &self.fill_color {
-            StyleValue::Simple(color) => Some(PolygonPaint { color: *color }),
-            StyleValue::Interpolate(expression) => Some(PolygonPaint {
-                color: expression.get_value(current_resolution)?,
-            }),
-            StyleValue::Steps(expression) => Some(PolygonPaint {
-                color: expression.get_value(current_resolution)?,
-            }),
+    pub(crate) fn to_paint(&self, current_resolution: f64) -> PolygonPaint {
+        PolygonPaint {
+            color: self.fill_color.get_value(current_resolution),
         }
     }
 }
@@ -340,7 +334,7 @@ mod tests {
     fn symbol_serialization_point() {
         let symbol = VectorTileSymbol::Point(VectorTilePointSymbol {
             size: 10.0,
-            color: Color::BLACK,
+            color: Color::BLACK.into(),
         });
 
         let _json = serde_json::to_string_pretty(&symbol).unwrap();
