@@ -1,39 +1,34 @@
+use std::cmp::Ordering;
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Color;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LinearInterpolationArgs<T> {
-    step_values: Vec<StepValue<T>>,
+    step_values: BTreeSet<StepValue<T>>,
 }
 
 impl<T: Clone> LinearInterpolationArgs<T> {
-    pub fn new(mut step_values: Vec<StepValue<T>>) -> Result<Self, String> {
+    pub fn new(step_values: Vec<StepValue<T>>) -> Result<Self, String> {
         if step_values.len() < 2 {
             return Err("At least 2 step values required".to_string());
         }
-
-        step_values.sort_by(|a, b| a.resolution.partial_cmp(&b.resolution).unwrap());
-
-        if step_values
-            .windows(2)
-            .any(|w| w[0].resolution == w[1].resolution)
-        {
-            return Err("Duplicate resolutions not allowed".to_string());
-        }
-
-        Ok(Self { step_values })
+        Ok(Self {
+            step_values: step_values.into_iter().collect::<BTreeSet<_>>(),
+        })
     }
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Deserialize)]
 pub struct ExponentialInterpolationArgs<T> {
     base: i32,
-    step_values: Vec<StepValue<T>>,
+    step_values: BTreeSet<StepValue<T>>,
 }
 
 impl<T: Clone> ExponentialInterpolationArgs<T> {
-    pub fn new(base: i32, mut step_values: Vec<StepValue<T>>) -> Result<Self, String> {
+    pub fn new(base: i32, step_values: Vec<StepValue<T>>) -> Result<Self, String> {
         if base <= 0 {
             return Err("Base must be positive".to_string());
         }
@@ -41,17 +36,10 @@ impl<T: Clone> ExponentialInterpolationArgs<T> {
         if step_values.len() < 2 {
             return Err("At least 2 step values required".to_string());
         }
-
-        step_values.sort_by(|a, b| a.resolution.partial_cmp(&b.resolution).unwrap());
-
-        if step_values
-            .windows(2)
-            .any(|w| w[0].resolution == w[1].resolution)
-        {
-            return Err("Duplicate resolutions not allowed".to_string());
-        }
-
-        Ok(Self { base, step_values })
+        Ok(Self {
+            base: base,
+            step_values: step_values.into_iter().collect::<BTreeSet<_>>(),
+        })
     }
 }
 
@@ -61,8 +49,8 @@ pub enum InterpolationArgs<T> {
     Exponential(ExponentialInterpolationArgs<T>),
 }
 
-impl<T> InterpolationArgs<T> {
-    fn step_values(&self) -> &[StepValue<T>] {
+impl<T: Copy> InterpolationArgs<T> {
+    fn step_values(&self) -> &BTreeSet<StepValue<T>> {
         match self {
             Self::Linear(args) => &args.step_values,
             Self::Exponential(args) => &args.step_values,
@@ -70,10 +58,30 @@ impl<T> InterpolationArgs<T> {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct StepValue<T> {
     resolution: f64,
     step_value: T,
+}
+
+impl<T> PartialEq for StepValue<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.resolution == other.resolution
+    }
+}
+
+impl<T> Eq for StepValue<T> {}
+
+impl<T> PartialOrd for StepValue<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.resolution.partial_cmp(&other.resolution)
+    }
+}
+
+impl<T> Ord for StepValue<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.resolution.total_cmp(&other.resolution)
+    }
 }
 
 /// Type used to define expressions for interpolation
@@ -90,7 +98,7 @@ pub struct StepExpression<T> {
     /// If, the current resolution is greater than step resolution
     /// the value T maps to the T value where the step resolution is
     /// less than that of current resolution.
-    step_values: Vec<StepValue<T>>,
+    step_values: BTreeSet<StepValue<T>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -148,18 +156,11 @@ impl InterpolateExpression<Color> {
     pub fn evaluate(&self, current_resolution: f64) -> Color {
         if let Some(resolution_value_range) = get_resolution_value_range(self, current_resolution) {
             match &self.interpolation_args {
-                InterpolationArgs::Linear(_) => Self::linear_interpolate_color(
-                    resolution_value_range.start_value,
-                    resolution_value_range.end_value,
-                    resolution_value_range.min_resolution,
-                    resolution_value_range.max_resolution,
-                    current_resolution,
-                ),
+                InterpolationArgs::Linear(_) => {
+                    Self::linear_interpolate_color(resolution_value_range, current_resolution)
+                }
                 InterpolationArgs::Exponential(args) => Self::exponential_interpolate_color(
-                    resolution_value_range.start_value,
-                    resolution_value_range.end_value,
-                    resolution_value_range.min_resolution,
-                    resolution_value_range.max_resolution,
+                    resolution_value_range,
                     args.base,
                     current_resolution,
                 ),
@@ -169,7 +170,11 @@ impl InterpolateExpression<Color> {
         }
     }
     fn get_boundary_value(&self, current_resolution: f64) -> Color {
-        let step_values = self.interpolation_args.step_values();
+        let step_values = self
+            .interpolation_args
+            .step_values()
+            .iter()
+            .collect::<Vec<_>>();
 
         if current_resolution < step_values[0].resolution {
             step_values[0].step_value
@@ -179,82 +184,76 @@ impl InterpolateExpression<Color> {
     }
 
     fn linear_interpolate_color(
-        start_value: Color,
-        end_value: Color,
-        min_resolution: f64,
-        max_resolution: f64,
+        rv_range: ResolutionValueRange<Color>,
         current_resolution: f64,
     ) -> Color {
         Color::rgba(
             linear_interpolation(
-                min_resolution,
-                max_resolution,
-                start_value.r() as f64,
-                end_value.r() as f64,
+                rv_range.min_resolution,
+                rv_range.max_resolution,
+                rv_range.start_value.r() as f64,
+                rv_range.end_value.r() as f64,
                 current_resolution,
             ) as u8,
             linear_interpolation(
-                min_resolution,
-                max_resolution,
-                start_value.g() as f64,
-                end_value.g() as f64,
+                rv_range.min_resolution,
+                rv_range.max_resolution,
+                rv_range.start_value.g() as f64,
+                rv_range.end_value.g() as f64,
                 current_resolution,
             ) as u8,
             linear_interpolation(
-                min_resolution,
-                max_resolution,
-                start_value.b() as f64,
-                end_value.b() as f64,
+                rv_range.min_resolution,
+                rv_range.max_resolution,
+                rv_range.start_value.b() as f64,
+                rv_range.end_value.b() as f64,
                 current_resolution,
             ) as u8,
             linear_interpolation(
-                min_resolution,
-                max_resolution,
-                start_value.a() as f64,
-                end_value.a() as f64,
+                rv_range.min_resolution,
+                rv_range.max_resolution,
+                rv_range.start_value.a() as f64,
+                rv_range.end_value.a() as f64,
                 current_resolution,
             ) as u8,
         )
     }
 
     fn exponential_interpolate_color(
-        start_value: Color,
-        end_value: Color,
-        min_resolution: f64,
-        max_resolution: f64,
+        rv_range: ResolutionValueRange<Color>,
         base: i32,
         current_resolution: f64,
     ) -> Color {
         Color::rgba(
             exponential_interpolation(
-                min_resolution,
-                max_resolution,
-                start_value.r() as f64,
-                end_value.r() as f64,
+                rv_range.min_resolution,
+                rv_range.max_resolution,
+                rv_range.start_value.r() as f64,
+                rv_range.end_value.r() as f64,
                 current_resolution,
                 base,
             ) as u8,
             exponential_interpolation(
-                min_resolution,
-                max_resolution,
-                start_value.g() as f64,
-                end_value.g() as f64,
+                rv_range.min_resolution,
+                rv_range.max_resolution,
+                rv_range.start_value.g() as f64,
+                rv_range.end_value.g() as f64,
                 current_resolution,
                 base,
             ) as u8,
             exponential_interpolation(
-                min_resolution,
-                max_resolution,
-                start_value.b() as f64,
-                end_value.b() as f64,
+                rv_range.min_resolution,
+                rv_range.max_resolution,
+                rv_range.start_value.b() as f64,
+                rv_range.end_value.b() as f64,
                 current_resolution,
                 base,
             ) as u8,
             exponential_interpolation(
-                min_resolution,
-                max_resolution,
-                start_value.a() as f64,
-                end_value.a() as f64,
+                rv_range.min_resolution,
+                rv_range.max_resolution,
+                rv_range.start_value.a() as f64,
+                rv_range.end_value.a() as f64,
                 current_resolution,
                 base,
             ) as u8,
@@ -297,9 +296,11 @@ fn get_resolution_value_range<T: Copy>(
     expression: &InterpolateExpression<T>,
     current_resolution: f64,
 ) -> Option<ResolutionValueRange<T>> {
-    let step_values: &[StepValue<T>] = &expression.interpolation_args.step_values();
+    let step_values: &BTreeSet<StepValue<T>> = expression.interpolation_args.step_values();
     // Try to find a matching window in step_values
     step_values
+        .iter()
+        .collect::<Vec<_>>()
         .windows(2)
         .find(|w| current_resolution >= w[0].resolution && current_resolution <= w[1].resolution)
         .map(|w| ResolutionValueRange {
@@ -311,37 +312,38 @@ fn get_resolution_value_range<T: Copy>(
 }
 
 impl<T: Copy> StepExpression<T> {
-    pub fn new(default_value: T, mut step_values: Vec<StepValue<T>>) -> Result<Self, String> {
+    pub fn new(default_value: T, step_values: Vec<StepValue<T>>) -> Result<Self, String> {
         if step_values.is_empty() {
             return Err("At least 1 step value required".to_string());
         }
-
-        step_values.sort_by(|a, b| a.resolution.partial_cmp(&b.resolution).unwrap());
-
-        if step_values
-            .windows(2)
-            .any(|w| w[0].resolution == w[1].resolution)
-        {
-            return Err("Duplicate resolutions not allowed".to_string());
-        }
-
         Ok(Self {
             default_value,
-            step_values,
+            step_values: step_values.into_iter().collect::<BTreeSet<_>>(),
         })
     }
 
     /// Evaluates color value by giving stepwise value
     /// of color on basis of zoom
     pub fn evaluate(&self, current_resolution: f64) -> T {
-        if let Some(w) = self.step_values.windows(2).find(|w| {
-            current_resolution >= w[0].resolution && current_resolution <= w[1].resolution
-        }) {
+        if let Some(w) = self
+            .step_values
+            .iter()
+            .collect::<Vec<_>>()
+            .windows(2)
+            .find(|w| {
+                current_resolution >= w[0].resolution && current_resolution <= w[1].resolution
+            })
+        {
             return w[0].step_value;
-        } else if current_resolution < self.step_values[0].resolution {
+        } else if current_resolution < self.step_values.iter().nth(0).unwrap().resolution {
             return self.default_value;
         } else {
-            return self.step_values[self.step_values.len() - 1].step_value;
+            return self
+                .step_values
+                .iter()
+                .nth(self.step_values.len() - 1)
+                .unwrap()
+                .step_value;
         }
     }
 }
@@ -397,6 +399,28 @@ mod tests {
     }
 
     #[test]
+    fn linear_interpolation_unordered() {
+        let args = LinearInterpolationArgs::new(vec![
+            StepValue {
+                resolution: 50.0,
+                step_value: Color::rgba(128, 128, 128, 128),
+            },
+            StepValue {
+                resolution: 0.0,
+                step_value: Color::rgba(0, 0, 0, 0),
+            },
+        ])
+        .unwrap();
+
+        let expr = InterpolateExpression {
+            interpolation_type: InterpolationFunction::Linear,
+            interpolation_args: InterpolationArgs::Linear(args),
+        };
+
+        assert_eq!(expr.evaluate(25.0), Color::rgba(64, 64, 64, 64));
+    }
+
+    #[test]
     fn linear_interpolation() {
         let args = LinearInterpolationArgs::new(vec![
             StepValue {
@@ -442,6 +466,36 @@ mod tests {
 
         assert_eq!(expr.evaluate(5.0), Color::rgba(0, 0, 0, 0));
         assert_eq!(expr.evaluate(150.0), Color::rgba(128, 128, 128, 128));
+    }
+
+    #[test]
+    fn exponential_interpolation_unordered() {
+        let args = ExponentialInterpolationArgs::new(
+            2,
+            vec![
+                StepValue {
+                    resolution: 50.0,
+                    step_value: Color::rgba(128, 128, 128, 128),
+                },
+                StepValue {
+                    resolution: 0.0,
+                    step_value: Color::rgba(0, 0, 0, 0),
+                },
+                StepValue {
+                    resolution: 75.0,
+                    step_value: Color::rgba(200, 200, 200, 200),
+                },
+            ],
+        )
+        .unwrap();
+
+        let expr = InterpolateExpression {
+            interpolation_type: InterpolationFunction::Exponential,
+            interpolation_args: InterpolationArgs::Exponential(args),
+        };
+
+        assert_eq!(expr.evaluate(25.0), Color::rgba(53, 53, 53, 53));
+        assert_eq!(expr.evaluate(60.0), Color::rgba(151, 151, 151, 151));
     }
 
     #[test]
@@ -491,7 +545,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(expr.evaluate(0.0), Color::from_hex("#f0f0f0"));
+        assert_eq!(expr.evaluate(5.0), Color::from_hex("#f0f0f0"));
         assert_eq!(expr.evaluate(30.0), Color::from_hex("#1d1d1d"));
     }
 
