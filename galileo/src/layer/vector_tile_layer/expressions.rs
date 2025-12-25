@@ -5,6 +5,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::Color;
 
+enum Channel {
+    R,
+    G,
+    B,
+    A,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LinearInterpolationArgs<T> {
     step_values: BTreeSet<StepValue<T>>,
@@ -155,16 +162,7 @@ impl InterpolateExpression<Color> {
     /// Evaluates value by interpolating color values
     pub fn evaluate(&self, current_resolution: f64) -> Color {
         if let Some(resolution_value_range) = get_resolution_value_range(self, current_resolution) {
-            match &self.interpolation_args {
-                InterpolationArgs::Linear(_) => {
-                    Self::linear_interpolate_color(resolution_value_range, current_resolution)
-                }
-                InterpolationArgs::Exponential(args) => Self::exponential_interpolate_color(
-                    resolution_value_range,
-                    args.base,
-                    current_resolution,
-                ),
-            }
+            self.interpolate_color(&resolution_value_range, current_resolution)
         } else {
             self.get_boundary_value(current_resolution)
         }
@@ -183,81 +181,50 @@ impl InterpolateExpression<Color> {
         }
     }
 
-    fn linear_interpolate_color(
-        rv_range: ResolutionValueRange<Color>,
+    fn interpolate_color(
+        &self,
+        rv_range: &ResolutionValueRange<Color>,
         current_resolution: f64,
     ) -> Color {
-        Color::rgba(
-            linear_interpolation(
-                rv_range.min_resolution,
-                rv_range.max_resolution,
-                rv_range.start_value.r() as f64,
-                rv_range.end_value.r() as f64,
-                current_resolution,
-            ) as u8,
-            linear_interpolation(
-                rv_range.min_resolution,
-                rv_range.max_resolution,
-                rv_range.start_value.g() as f64,
-                rv_range.end_value.g() as f64,
-                current_resolution,
-            ) as u8,
-            linear_interpolation(
-                rv_range.min_resolution,
-                rv_range.max_resolution,
-                rv_range.start_value.b() as f64,
-                rv_range.end_value.b() as f64,
-                current_resolution,
-            ) as u8,
-            linear_interpolation(
-                rv_range.min_resolution,
-                rv_range.max_resolution,
-                rv_range.start_value.a() as f64,
-                rv_range.end_value.a() as f64,
-                current_resolution,
-            ) as u8,
-        )
+        let channels = vec![Channel::R, Channel::G, Channel::B, Channel::A];
+
+        let values: Vec<u8> = channels
+            .iter()
+            .map(|ch| self.interpolate_color_channel(current_resolution, &rv_range, &ch))
+            .collect::<Vec<_>>();
+
+        Color::rgba(values[0], values[1], values[2], values[3])
     }
 
-    fn exponential_interpolate_color(
-        rv_range: ResolutionValueRange<Color>,
-        base: i32,
+    fn interpolate_color_channel(
+        &self,
         current_resolution: f64,
-    ) -> Color {
-        Color::rgba(
-            exponential_interpolation(
+        rv_range: &ResolutionValueRange<Color>,
+        channel: &Channel,
+    ) -> u8 {
+        let (start, end) = match channel {
+            Channel::R => (rv_range.start_value.r(), rv_range.end_value.r()),
+            Channel::G => (rv_range.start_value.g(), rv_range.end_value.g()),
+            Channel::B => (rv_range.start_value.b(), rv_range.end_value.b()),
+            Channel::A => (rv_range.start_value.a(), rv_range.end_value.a()),
+        };
+        match &self.interpolation_args {
+            InterpolationArgs::Linear(_) => linear_interpolation(
                 rv_range.min_resolution,
                 rv_range.max_resolution,
-                rv_range.start_value.r() as f64,
-                rv_range.end_value.r() as f64,
+                start as f64,
+                end as f64,
                 current_resolution,
-                base,
             ) as u8,
-            exponential_interpolation(
+            InterpolationArgs::Exponential(args) => exponential_interpolation(
                 rv_range.min_resolution,
                 rv_range.max_resolution,
-                rv_range.start_value.g() as f64,
-                rv_range.end_value.g() as f64,
+                start as f64,
+                end as f64,
                 current_resolution,
-                base,
+                args.base,
             ) as u8,
-            exponential_interpolation(
-                rv_range.min_resolution,
-                rv_range.max_resolution,
-                rv_range.start_value.b() as f64,
-                rv_range.end_value.b() as f64,
-                current_resolution,
-                base,
-            ) as u8,
-            exponential_interpolation(
-                rv_range.min_resolution,
-                rv_range.max_resolution,
-                rv_range.start_value.a() as f64,
-                rv_range.end_value.a() as f64,
-                current_resolution,
-                base,
-            ) as u8,
-        )
+        }
     }
 }
 
