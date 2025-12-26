@@ -137,9 +137,25 @@ impl From<Color> for StyleValue<Color> {
     }
 }
 
+impl From<f64> for StyleValue<f64> {
+    fn from(num: f64) -> Self {
+        Self::Simple(num)
+    }
+}
+
 impl StyleValue<Color> {
-    /// Evaluates value depending upon the type of expression used.
+    /// Evaluates value of Color depending upon the type of expression used.
     pub fn get_value(&self, current_resolution: f64) -> Color {
+        match self {
+            StyleValue::Simple(t) => *t,
+            StyleValue::Interpolate(expression) => expression.evaluate(current_resolution),
+            StyleValue::Steps(expression) => expression.evaluate(current_resolution),
+        }
+    }
+}
+impl StyleValue<f64> {
+    /// Evaluates value of Number depending upon the type of expression used.
+    pub fn get_value(&self, current_resolution: f64) -> f64 {
         match self {
             StyleValue::Simple(t) => *t,
             StyleValue::Interpolate(expression) => expression.evaluate(current_resolution),
@@ -172,10 +188,21 @@ impl<T> InterpolateExpression<T> {
 }
 
 impl InterpolateExpression<Color> {
-    /// Evaluates value of the expression on the basis of the build
+    /// Evaluates Color value of the expression on the basis of the build
     fn evaluate(&self, current_resolution: f64) -> Color {
         if let Some(resolution_value_range) = get_resolution_value_range(self, current_resolution) {
             self.interpolate_color(&resolution_value_range, current_resolution)
+        } else {
+            self.get_boundary_value(current_resolution)
+        }
+    }
+}
+
+impl InterpolateExpression<f64> {
+    /// Evaluates Numeric value of the expression on the basis of the build
+    fn evaluate(&self, current_resolution: f64) -> f64 {
+        if let Some(resolution_value_range) = get_resolution_value_range(self, current_resolution) {
+            self.interpolate_number(&resolution_value_range, current_resolution)
         } else {
             self.get_boundary_value(current_resolution)
         }
@@ -233,6 +260,32 @@ impl InterpolateExpression<Color> {
                 current_resolution,
                 args.base,
             ) as u8,
+        }
+    }
+}
+
+impl InterpolateExpression<f64> {
+    fn interpolate_number(
+        &self,
+        rv_range: &ResolutionValueRange<f64>,
+        current_resolution: f64,
+    ) -> f64 {
+        match &self.interpolation_args {
+            InterpolationArgs::Linear(_) => linear_interpolation(
+                rv_range.min_resolution,
+                rv_range.max_resolution,
+                rv_range.start_value,
+                rv_range.end_value,
+                current_resolution,
+            ),
+            InterpolationArgs::Exponential(args) => exponential_interpolation(
+                rv_range.min_resolution,
+                rv_range.max_resolution,
+                rv_range.start_value,
+                rv_range.end_value,
+                current_resolution,
+                args.base,
+            ),
         }
     }
 }
@@ -299,10 +352,10 @@ impl<T: Copy> StepExpression<T> {
         })
     }
 }
-impl StepExpression<Color> {
-    /// Evaluates color value by giving stepwise value
+impl<T: Copy> StepExpression<T> {
+    /// Evaluates generic expression by giving stepwise value
     /// of color on basis of zoom
-    fn evaluate(&self, current_resolution: f64) -> Color {
+    fn evaluate(&self, current_resolution: f64) -> T {
         if let Some(w) = self
             .step_values
             .iter()
@@ -333,7 +386,220 @@ impl StepExpression<Color> {
 }
 
 #[cfg(test)]
-mod tests {
+mod number_tests {
+    use super::*;
+
+    #[test]
+    fn test_get_resolution_value_range_out_of_bounds_f64() {
+        let args = LinearInterpolationArgs::new(vec![
+            StepValue {
+                resolution: 25.0,
+                step_value: 0.0,
+            },
+            StepValue {
+                resolution: 50.0,
+                step_value: 100.0,
+            },
+        ])
+        .expect("failed to create interpolation arguments");
+
+        let expr = InterpolateExpression {
+            interpolation_args: InterpolationArgs::Linear(args),
+        };
+
+        assert!(get_resolution_value_range(&expr, 75.0).is_none());
+        assert!(get_resolution_value_range(&expr, 20.0).is_none());
+    }
+
+    #[test]
+    fn linear_interpolation_bounds_f64() {
+        let args = LinearInterpolationArgs::new(vec![
+            StepValue {
+                resolution: 25.0,
+                step_value: 0.0,
+            },
+            StepValue {
+                resolution: 50.0,
+                step_value: 100.0,
+            },
+        ])
+        .expect("failed to create interpolation arguments");
+
+        let expr = InterpolateExpression {
+            interpolation_args: InterpolationArgs::Linear(args),
+        };
+
+        assert_eq!(expr.evaluate(20.0).round(), 0.0);
+        assert_eq!(expr.evaluate(150.0).round(), 100.0);
+    }
+
+    #[test]
+    fn linear_interpolation_unordered_f64() {
+        let args = LinearInterpolationArgs::new(vec![
+            StepValue {
+                resolution: 50.0,
+                step_value: 100.0,
+            },
+            StepValue {
+                resolution: 0.0,
+                step_value: 0.0,
+            },
+        ])
+        .expect("failed to create interpolation arguments");
+
+        let expr = InterpolateExpression {
+            interpolation_args: InterpolationArgs::Linear(args),
+        };
+
+        assert_eq!(expr.evaluate(25.0).round(), 50.0);
+    }
+
+    #[test]
+    fn linear_interpolation_f64() {
+        let args = LinearInterpolationArgs::new(vec![
+            StepValue {
+                resolution: 0.0,
+                step_value: 0.0,
+            },
+            StepValue {
+                resolution: 50.0,
+                step_value: 100.0,
+            },
+        ])
+        .expect("failed to create interpolation arguments");
+
+        let expr = InterpolateExpression {
+            interpolation_args: InterpolationArgs::Linear(args),
+        };
+
+        assert_eq!(expr.evaluate(25.0).round(), 50.0);
+    }
+
+    #[test]
+    fn exponential_bounds_f64() {
+        let args = ExponentialInterpolationArgs::new(
+            2,
+            vec![
+                StepValue {
+                    resolution: 10.0,
+                    step_value: 0.0,
+                },
+                StepValue {
+                    resolution: 50.0,
+                    step_value: 100.0,
+                },
+            ],
+        )
+        .expect("failed to create interpolation arguments");
+
+        let expr = InterpolateExpression::new(InterpolationArgs::Exponential(args));
+
+        assert_eq!(expr.evaluate(5.0).round(), 0.0);
+        assert_eq!(expr.evaluate(150.0).round(), 100.0);
+    }
+
+    #[test]
+    fn exponential_interpolation_unordered_f64() {
+        let args = ExponentialInterpolationArgs::new(
+            2,
+            vec![
+                StepValue {
+                    resolution: 50.0,
+                    step_value: 100.0,
+                },
+                StepValue {
+                    resolution: 0.0,
+                    step_value: 0.0,
+                },
+                StepValue {
+                    resolution: 75.0,
+                    step_value: 200.0,
+                },
+            ],
+        )
+        .expect("failed to create interpolation arguments");
+
+        let expr = InterpolateExpression::new(InterpolationArgs::Exponential(args));
+
+        assert_eq!(expr.evaluate(25.0).round(), 41.0);
+        assert_eq!(expr.evaluate(60.0).round(), 132.0);
+    }
+
+    #[test]
+    fn exponential_interpolation_f64() {
+        let args = ExponentialInterpolationArgs::new(
+            2,
+            vec![
+                StepValue {
+                    resolution: 0.0,
+                    step_value: 0.0,
+                },
+                StepValue {
+                    resolution: 50.0,
+                    step_value: 100.0,
+                },
+                StepValue {
+                    resolution: 75.0,
+                    step_value: 200.0,
+                },
+            ],
+        )
+        .expect("failed to create interpolation arguments");
+
+        let expr = InterpolateExpression::new(InterpolationArgs::Exponential(args));
+
+        assert_eq!(expr.evaluate(25.0).round(), 41.0);
+        assert_eq!(expr.evaluate(60.0).round(), 132.0);
+    }
+
+    #[test]
+    fn test_step_expression_bounds_f64() {
+        let expr = StepExpression::<f64>::new(
+            10.0,
+            vec![
+                StepValue {
+                    resolution: 10.0,
+                    step_value: 20.0,
+                },
+                StepValue {
+                    resolution: 20.0,
+                    step_value: 30.0,
+                },
+            ],
+        )
+        .expect("failed to create step expression");
+
+        assert_eq!(expr.evaluate(5.0).round(), 10.0);
+        assert_eq!(expr.evaluate(30.0).round(), 30.0);
+    }
+
+    #[test]
+    fn test_step_expression_f64() {
+        let expr = StepExpression::<f64>::new(
+            10.0,
+            vec![
+                StepValue {
+                    resolution: 10.0,
+                    step_value: 20.0,
+                },
+                StepValue {
+                    resolution: 20.0,
+                    step_value: 30.0,
+                },
+                StepValue {
+                    resolution: 30.0,
+                    step_value: 40.0,
+                },
+            ],
+        )
+        .expect("failed to create step expression");
+
+        assert_eq!(expr.evaluate(15.0).round(), 20.0);
+        assert_eq!(expr.evaluate(25.0).round(), 30.0);
+    }
+}
+#[cfg(test)]
+mod color_tests {
     use super::*;
 
     #[test]

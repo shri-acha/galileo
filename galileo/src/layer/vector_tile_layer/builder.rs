@@ -462,7 +462,7 @@ impl VectorTileLayerBuilder {
                     min_resolution: None,
                     properties: Default::default(),
                     symbol: VectorTileSymbol::Line(VectorTileLineSymbol {
-                        width: 1.0,
+                        width: 1.0.into(),
                         stroke_color: Color::BLACK.into(),
                     }),
                 },

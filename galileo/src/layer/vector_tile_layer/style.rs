@@ -270,14 +270,17 @@ impl VectorTileSymbol {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VectorTilePointSymbol {
     /// Size of the point.
-    pub size: f64,
+    pub size: StyleValue<f64>,
     /// Color of the point.
     pub color: StyleValue<Color>,
 }
 
 impl VectorTilePointSymbol {
     pub(crate) fn to_paint(&self, current_resolution: f64) -> PointPaint<'_> {
-        PointPaint::circle(self.color.get_value(current_resolution), self.size as f32)
+        PointPaint::circle(
+            self.color.get_value(current_resolution),
+            self.size.get_value(current_resolution) as f32,
+        )
     }
 }
 
@@ -285,7 +288,7 @@ impl VectorTilePointSymbol {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VectorTileLineSymbol {
     /// Width of the line in pixels.
-    pub width: f64,
+    pub width: StyleValue<f64>,
     /// Color of the line in pixels.
     pub stroke_color: StyleValue<Color>,
 }
@@ -294,7 +297,7 @@ impl VectorTileLineSymbol {
     pub(crate) fn to_paint(&self, current_resolution: f64) -> LinePaint {
         LinePaint {
             color: self.stroke_color.get_value(current_resolution),
-            width: self.width,
+            width: self.width.get_value(current_resolution),
             offset: 0.0,
             line_cap: LineCap::Butt,
         }
@@ -332,7 +335,7 @@ mod tests {
     #[test]
     fn symbol_serialization_point() {
         let symbol = VectorTileSymbol::Point(VectorTilePointSymbol {
-            size: 10.0,
+            size: 10.0.into(),
             color: Color::BLACK.into(),
         });
 
