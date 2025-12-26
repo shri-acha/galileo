@@ -25,9 +25,8 @@ use crate::tile_schema::{TileIndex, TileSchema};
 use crate::view::MapView;
 use crate::Color;
 
-pub mod expressions;
-
 mod builder;
+pub mod expressions;
 pub mod style;
 pub mod tile_provider;
 mod vector_tile;

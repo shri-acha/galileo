@@ -276,8 +276,8 @@ pub struct VectorTilePointSymbol {
 }
 
 impl VectorTilePointSymbol {
-    pub(crate) fn to_paint(&self, current_resolution: f64) -> PointPaint {
-        return PointPaint::circle(self.color.get_value(current_resolution), self.size as f32);
+    pub(crate) fn to_paint(&self, current_resolution: f64) -> PointPaint<'_> {
+        PointPaint::circle(self.color.get_value(current_resolution), self.size as f32)
     }
 }
 

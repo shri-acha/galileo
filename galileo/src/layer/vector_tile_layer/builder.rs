@@ -15,7 +15,6 @@ use crate::layer::attribution::Attribution;
 use crate::layer::data_provider::{
     FileCacheController, FileCachePathModifier, PersistentCacheController, UrlSource,
 };
-use crate::layer::vector_tile_layer::expressions::StyleValue;
 use crate::layer::Layer;
 use crate::tile_schema::{TileIndex, TileSchemaBuilder};
 use crate::{Color, Messenger, TileSchema};
