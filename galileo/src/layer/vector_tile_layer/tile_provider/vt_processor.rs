@@ -133,7 +133,7 @@ impl VtProcessor {
     ) -> Option<PointPaint<'a>> {
         rule.symbol
             .point()
-            .map(|symbol| symbol.to_paint(resolution,feature))
+            .map(|symbol| symbol.to_paint(resolution, feature))
             .or_else(|| {
                 rule.symbol
                     .label()
@@ -168,7 +168,7 @@ impl VtProcessor {
         resolution: f64,
         feature: &MvtFeature,
     ) -> Option<LinePaint> {
-        rule.symbol.line().map(|s| s.to_paint(resolution,feature))
+        rule.symbol.line().map(|s| s.to_paint(resolution, feature))
     }
 
     fn get_polygon_symbol(
@@ -176,7 +176,9 @@ impl VtProcessor {
         resolution: f64,
         feature: &MvtFeature,
     ) -> Option<PolygonPaint> {
-        rule.symbol.polygon().map(|s| s.to_paint(resolution,feature))
+        rule.symbol
+            .polygon()
+            .map(|s| s.to_paint(resolution, feature))
     }
 
     fn transform_polygon(mvt_polygon: &MvtPolygon, tile_resolution: f64) -> Polygon<Point3> {

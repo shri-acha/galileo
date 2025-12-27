@@ -144,7 +144,7 @@ where
         let value = Value::deserialize(deserializer)?;
 
         match value {
-            Value::Array(arr) => match arr.get(0).and_then(|v| v.as_str()) {
+            Value::Array(arr) => match arr.first().and_then(|v| v.as_str()) {
                 Some("interpolate") => {
                     let expr =
                         InterpolateExpression::from_array(arr).map_err(serde::de::Error::custom)?;
@@ -208,7 +208,7 @@ fn parse_step<T>(raw: &[serde_json::Value]) -> Result<Vec<StepValue<T>>, String>
 where
     T: for<'de> Deserialize<'de>,
 {
-    if raw.len() % 2 != 0 {
+    if !raw.len().is_multiple_of(2) {
         return Err("Stops must be pairs".into());
     }
 
@@ -222,7 +222,7 @@ where
         let value = T::deserialize(pair[1].clone()).map_err(|_| "Invalid stop value")?;
 
         out.push(StepValue {
-            resolution: resolution,
+            resolution,
             step_value: value,
         });
     }

@@ -276,7 +276,11 @@ pub struct VectorTilePointSymbol {
 }
 
 impl VectorTilePointSymbol {
-    pub(crate) fn to_paint(&self, current_resolution: f64,_feature:&MvtFeature) -> PointPaint<'_> {
+    pub(crate) fn to_paint(
+        &self,
+        current_resolution: f64,
+        _feature: &MvtFeature,
+    ) -> PointPaint<'_> {
         PointPaint::circle(
             self.color.get_value(current_resolution),
             self.size.get_value(current_resolution) as f32,
@@ -294,7 +298,7 @@ pub struct VectorTileLineSymbol {
 }
 
 impl VectorTileLineSymbol {
-    pub(crate) fn to_paint(&self, current_resolution: f64,_feature:&MvtFeature) -> LinePaint {
+    pub(crate) fn to_paint(&self, current_resolution: f64, _feature: &MvtFeature) -> LinePaint {
         LinePaint {
             color: self.stroke_color.get_value(current_resolution),
             width: self.width.get_value(current_resolution),
@@ -312,7 +316,7 @@ pub struct VectorTilePolygonSymbol {
 }
 
 impl VectorTilePolygonSymbol {
-    pub(crate) fn to_paint(&self, current_resolution: f64,_feature:&MvtFeature) -> PolygonPaint {
+    pub(crate) fn to_paint(&self, current_resolution: f64, _feature: &MvtFeature) -> PolygonPaint {
         PolygonPaint {
             color: self.fill_color.get_value(current_resolution),
         }
