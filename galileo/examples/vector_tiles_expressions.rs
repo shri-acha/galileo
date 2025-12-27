@@ -1,4 +1,5 @@
-//! This example shows how to create and work with vector tile layers.
+//! This example shows how to create and work with vector
+//! tile layers with style strings containing interpolate and step like expressions
 
 use std::sync::Arc;
 
@@ -38,8 +39,8 @@ impl eframe::App for App {
                     if ui.button("Default style").clicked() {
                         self.set_style(default_style());
                     }
-                    if ui.button("Gray style").clicked() {
-                        self.set_style(gray_style());
+                    if ui.button("Interpolated style").clicked() {
+                        self.set_style(interpolated_style());
                     }
                 });
             });
@@ -129,28 +130,72 @@ fn default_style() -> VectorTileStyle {
     serde_json::from_str(include_str!("data/vt_style.json")).expect("invalid style json")
 }
 
-fn gray_style() -> VectorTileStyle {
+fn interpolated_style() -> VectorTileStyle {
     let style_str = r##"
 {
   "rules": [
     {
       "symbol": {
-        "line": {
-          "stroke_color": "#000000ff",
-          "width": 0.5
+        "polygon": {
+          "fill_color": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            5,  "#e8f4f8ff",
+            10, "#b3d9e6ff",
+            15, "#7fb3d5ff"
+          ]
         }
       }
     },
     {
       "symbol": {
-        "polygon": {
-          "fill_color": "#999999ff"
+        "line": {
+          "stroke_color": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            5,  "#d4d4d4ff",
+            10, "#8a8a8aff",
+            15, "#4a4a4aff"
+          ],
+          "width": [
+            "step",
+            ["zoom"],
+            0.5,
+            8, 1.5,
+            12, 3.0,
+            16, 5.0
+          ]
+        }
+      }
+    },
+    {
+      "symbol": {
+        "point": {
+          "color": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            6,  "#ff6b6bff",
+            8, "#ee5a6fff",
+            12, "#c92a2aff"
+          ],
+          "size": [
+            "step",
+            ["zoom"],
+            4.0,
+            10, 10.0,
+            14, 12.0,
+            18, 14.0
+          ]
         }
       }
     }
   ],
-  "background": "#ffffffff"
-}"##;
+  "background": "#f5f5f5ff"
+}
+"##;
     serde_json::from_str(style_str).expect("invalid style json")
 }
 

@@ -1,5 +1,4 @@
 //! Module that provides support for step and interpolate expressions for Color and Number types
-
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
@@ -7,6 +6,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::Color;
 
+/// Wrapper over arguments for Interpolation Functions
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum InterpolationArgs<T> {
+    /// Linear variant of interpolation arguments
+    Linear(LinearInterpolationArgs<T>),
+    /// Exponential variant of interpolation arguments
+    Exponential(ExponentialInterpolationArgs<T>),
+}
+
+impl<T: Copy> InterpolationArgs<T> {
+    fn step_values(&self) -> &BTreeSet<StepValue<T>> {
+        match self {
+            Self::Linear(args) => &args.step_values,
+            Self::Exponential(args) => &args.step_values,
+        }
+    }
+}
 /// Arguments for Linear Interpolation Function
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LinearInterpolationArgs<T> {
@@ -48,23 +64,7 @@ impl<T: Copy> ExponentialInterpolationArgs<T> {
         })
     }
 }
-/// Wrapper over arguments for Interpolation Functions
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum InterpolationArgs<T> {
-    /// Linear variant of interpolation arguments
-    Linear(LinearInterpolationArgs<T>),
-    /// Exponential variant of interpolation arguments
-    Exponential(ExponentialInterpolationArgs<T>),
-}
 
-impl<T: Copy> InterpolationArgs<T> {
-    fn step_values(&self) -> &BTreeSet<StepValue<T>> {
-        match self {
-            Self::Linear(args) => &args.step_values,
-            Self::Exponential(args) => &args.step_values,
-        }
-    }
-}
 /// Wrapper type for each step value
 /// i.e. resolution and a Color or a Number
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -101,14 +101,14 @@ pub struct InterpolateExpression<T> {
     interpolation_args: InterpolationArgs<T>,
 }
 /// Type used to define Step Function
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct StepExpression<T> {
-    default_value: T,
     /// Each stop value maps the resolution to the T type
     /// If, the current resolution is greater than step resolution
     /// the value T maps to the T value where the step resolution is
     /// less than that of current resolution.
     step_values: BTreeSet<StepValue<T>>,
+    default_value: T,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -121,14 +121,113 @@ struct ResolutionValueRange<T> {
 
 /// StyleValue introduces simple, interpolation and step functions to be used as features that are
 /// evaluated to give color values on the basis of the zoom level
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub enum StyleValue<T> {
-    /// Style variant simple values(i.e. like Color::BLACK)
-    Simple(T),
     /// Style variant to wrap interpolate function
     Interpolate(InterpolateExpression<T>),
     /// Style variant to wrap step function
     Steps(StepExpression<T>),
+    /// Style variant simple values(i.e. like Color::BLACK)
+    Simple(T),
+}
+
+impl<'de, T> Deserialize<'de> for StyleValue<T>
+where
+    T: for<'a> Deserialize<'a> + Copy,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde_json::Value;
+
+        let value = Value::deserialize(deserializer)?;
+
+        match value {
+            Value::Array(arr) => match arr.get(0).and_then(|v| v.as_str()) {
+                Some("interpolate") => {
+                    let expr =
+                        InterpolateExpression::from_array(arr).map_err(serde::de::Error::custom)?;
+                    Ok(StyleValue::Interpolate(expr))
+                }
+                Some("step") => {
+                    let expr = StepExpression::from_array(arr).map_err(serde::de::Error::custom)?;
+                    Ok(StyleValue::Steps(expr))
+                }
+                _ => Err(serde::de::Error::custom("Unknown expression")),
+            },
+            other => {
+                let literal =
+                    serde_json::from_value::<T>(other).map_err(serde::de::Error::custom)?;
+                Ok(StyleValue::Simple(literal))
+            }
+        }
+    }
+}
+
+impl<T> InterpolateExpression<T>
+where
+    T: Copy + for<'de> Deserialize<'de>,
+{
+    fn from_array(arr: Vec<serde_json::Value>) -> Result<Self, String> {
+        if arr.len() < 6 {
+            return Err("Invalid interpolate expression".into());
+        }
+        let interpolation_args = match &arr[1] {
+            serde_json::Value::Array(v) if v[0] == "linear" => {
+                InterpolationArgs::Linear(LinearInterpolationArgs::new(parse_step(&arr[3..])?)?)
+            }
+            serde_json::Value::Array(v) if v[0] == "exponential" => {
+                let base = v.get(1).and_then(|b| b.as_i64()).unwrap_or(1) as i32;
+                InterpolationArgs::Exponential(ExponentialInterpolationArgs::new(
+                    base,
+                    parse_step(&arr[3..])?,
+                )?)
+            }
+            _ => return Err("Unsupported interpolation type".into()),
+        };
+        Ok(Self { interpolation_args })
+    }
+}
+
+impl<T> StepExpression<T>
+where
+    T: Copy + for<'de> Deserialize<'de>,
+{
+    fn from_array(arr: Vec<serde_json::Value>) -> Result<Self, String> {
+        if arr.len() < 4 {
+            return Err("Invalid step expression".into());
+        }
+        let default_value = T::deserialize(arr[2].clone()).map_err(|_| "Invalid default value")?;
+        let step_values = parse_step(&arr[3..])?;
+        Self::new(default_value, step_values)
+    }
+}
+
+fn parse_step<T>(raw: &[serde_json::Value]) -> Result<Vec<StepValue<T>>, String>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    if raw.len() % 2 != 0 {
+        return Err("Stops must be pairs".into());
+    }
+
+    let mut out = Vec::new();
+
+    for pair in raw.chunks(2) {
+        let zoom_level = pair[0].as_i64().ok_or("Invalid stop resolution")?;
+
+        let resolution = 156543.03392800014 / 2.0f64.powi(zoom_level as i32);
+
+        let value = T::deserialize(pair[1].clone()).map_err(|_| "Invalid stop value")?;
+
+        out.push(StepValue {
+            resolution: resolution,
+            step_value: value,
+        });
+    }
+
+    Ok(out)
 }
 
 impl From<Color> for StyleValue<Color> {
@@ -425,9 +524,7 @@ mod number_tests {
         ])
         .expect("failed to create interpolation arguments");
 
-        let expr = InterpolateExpression {
-            interpolation_args: InterpolationArgs::Linear(args),
-        };
+        let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
 
         assert_eq!(expr.evaluate(20.0).round(), 0.0);
         assert_eq!(expr.evaluate(150.0).round(), 100.0);
@@ -447,9 +544,7 @@ mod number_tests {
         ])
         .expect("failed to create interpolation arguments");
 
-        let expr = InterpolateExpression {
-            interpolation_args: InterpolationArgs::Linear(args),
-        };
+        let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
 
         assert_eq!(expr.evaluate(25.0).round(), 50.0);
     }
@@ -468,9 +563,7 @@ mod number_tests {
         ])
         .expect("failed to create interpolation arguments");
 
-        let expr = InterpolateExpression {
-            interpolation_args: InterpolationArgs::Linear(args),
-        };
+        let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
 
         assert_eq!(expr.evaluate(25.0).round(), 50.0);
     }
@@ -598,6 +691,7 @@ mod number_tests {
         assert_eq!(expr.evaluate(25.0).round(), 30.0);
     }
 }
+
 #[cfg(test)]
 mod color_tests {
     use super::*;
@@ -638,9 +732,7 @@ mod color_tests {
         ])
         .expect("failed to create interpolation arguments");
 
-        let expr = InterpolateExpression {
-            interpolation_args: InterpolationArgs::Linear(args),
-        };
+        let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
 
         assert_eq!(expr.evaluate(20.0), Color::rgba(0, 0, 0, 0));
         assert_eq!(expr.evaluate(150.0), Color::rgba(128, 128, 128, 128));
@@ -660,9 +752,7 @@ mod color_tests {
         ])
         .expect("failed to create interpolation arguments");
 
-        let expr = InterpolateExpression {
-            interpolation_args: InterpolationArgs::Linear(args),
-        };
+        let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
 
         assert_eq!(expr.evaluate(25.0), Color::rgba(64, 64, 64, 64));
     }
@@ -681,9 +771,7 @@ mod color_tests {
         ])
         .expect("failed to create interpolation arguments");
 
-        let expr = InterpolateExpression {
-            interpolation_args: InterpolationArgs::Linear(args),
-        };
+        let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
 
         assert_eq!(expr.evaluate(25.0), Color::rgba(64, 64, 64, 64));
     }
@@ -780,7 +868,7 @@ mod color_tests {
                 },
             ],
         )
-        .expect("failed to create interpolation arguments");
+        .expect("failed to create step expression");
 
         assert_eq!(expr.evaluate(5.0), Color::from_hex("#f0f0f0"));
         assert_eq!(expr.evaluate(30.0), Color::from_hex("#1d1d1d"));
@@ -805,7 +893,7 @@ mod color_tests {
                 },
             ],
         )
-        .expect("failed to create interpolation arguments");
+        .expect("failed to create step expression");
 
         assert_eq!(expr.evaluate(15.0), Color::from_hex("#fafafa"));
         assert_eq!(expr.evaluate(25.0), Color::from_hex("#1d1d1d"));
