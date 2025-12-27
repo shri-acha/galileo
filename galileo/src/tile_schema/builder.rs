@@ -14,11 +14,13 @@ use super::schema::{TileSchema, VerticalDirection};
 #[derive(Debug)]
 pub struct TileSchemaBuilder {
     origin: Point2,
-    bounds: Rect,
+    world_bounds: Rect,
+    tile_bounds: Rect,
     lods: Lods,
     tile_width: u32,
     tile_height: u32,
     y_direction: VerticalDirection,
+    wrap_x: bool,
 }
 
 #[derive(Debug)]
@@ -74,8 +76,8 @@ impl TileSchemaBuilder {
     pub fn build(self) -> Result<TileSchema, TileSchemaError> {
         // Resolution is bound by the maximum tile index that can be represented
         let min_resolution = f64::min(
-            self.bounds.width() / self.tile_width as f64 / u64::MAX as f64,
-            self.bounds.height() / self.tile_height as f64 / u64::MAX as f64,
+            self.world_bounds.width() / self.tile_width as f64 / u64::MAX as f64,
+            self.world_bounds.height() / self.tile_height as f64 / u64::MAX as f64,
         );
 
         let lods = match self.lods {
@@ -84,7 +86,7 @@ impl TileSchemaBuilder {
                     return Err(TileSchemaError::NoZLevelsProvided);
                 }
 
-                let top_resolution = self.bounds.width() / self.tile_width as f64;
+                let top_resolution = self.world_bounds.width() / self.tile_width as f64;
 
                 let max_z_level = *z_levels.iter().max().unwrap_or(&0);
                 let mut lods = vec![f64::MAX; max_z_level as usize + 1];
@@ -160,11 +162,12 @@ impl TileSchemaBuilder {
 
         Ok(TileSchema {
             origin: self.origin,
-            bounds: self.bounds,
+            bounds: self.tile_bounds,
             lods: Arc::new(lods),
             tile_width: self.tile_width,
             tile_height: self.tile_height,
             y_direction: self.y_direction,
+            wrap_x: self.wrap_x,
         })
     }
 
@@ -182,7 +185,13 @@ impl TileSchemaBuilder {
 
         Self {
             origin: Point2::new(-MAX_COORD_VALUE, MAX_COORD_VALUE),
-            bounds: Rect::new(
+            world_bounds: Rect::new(
+                -MAX_COORD_VALUE,
+                -MAX_COORD_VALUE,
+                MAX_COORD_VALUE,
+                MAX_COORD_VALUE,
+            ),
+            tile_bounds: Rect::new(
                 -MAX_COORD_VALUE,
                 -MAX_COORD_VALUE,
                 MAX_COORD_VALUE,
@@ -192,6 +201,7 @@ impl TileSchemaBuilder {
             tile_width: 0,
             tile_height: 0,
             y_direction: VerticalDirection::TopToBottom,
+            wrap_x: true,
         }
     }
 
@@ -216,6 +226,70 @@ impl TileSchemaBuilder {
     /// would result in [`TileSchemaError::NotSortedZLevels`] error.
     pub fn with_z_levels(mut self, z_levels: impl IntoIterator<Item = (u32, f64)>) -> Self {
         self.lods = Lods::Custom(z_levels.into_iter().collect());
+        self
+    }
+
+    /// If set to true, tiles will wrap around x axis of the schema bounds.
+    ///
+    /// This means, that if a tile requested for x coordinate that is larger than the maximum x of the
+    /// bounding box or smaller than the minimum x value, the tile index will be calculated by reducing
+    /// or increasing x coordinate by the whole number of bounding box widths. This produces an effect of
+    /// horizontally infinite map, where a user can pan as log as they want to the right or left.
+    ///
+    /// Note, that for wrapping to work property, bounds of the tile schema should cover the whole globe.
+    /// This is not enforced in `.build()` method validatation since tile schema is agnostic to the CRS
+    /// it will be used for.
+    pub fn wrap_x(mut self, shall_wrap: bool) -> Self {
+        self.wrap_x = shall_wrap;
+        self
+    }
+
+    /// Sets the origin point of the tiles.
+    ///
+    /// Origin point is set in projection coordinates (for example, in Mercator meters for Mercator projection).
+    ///
+    /// It is the point where the tile with index `(X: 0, Y: 0)` is located (for every Z index). If the schema
+    /// uses direction of Y indices from top to bottom, the origin point will be at the left top angle of the
+    /// tile. If the direction of Y indices is from bottom to top, the origin point will be at the left bottom
+    /// point of the tile.
+    ///
+    /// ```
+    /// # use galileo::tile_schema::TileSchemaBuilder;
+    /// # use galileo::galileo_types::cartesian::Point2;
+    /// let tile_schema = TileSchemaBuilder::web_mercator(0..23)
+    ///     .origin(Point2::new(-20_037_508.342787, 20_037_508.342787))
+    ///     .build()
+    ///     .expect("tile schema is properly defined");
+    /// ```
+    ///
+    /// Note that origin point doesn't have to be inside the schema bounds. For example, the origin may point to
+    /// the top left angle of the world map, but tiles might only be available for a specific region, and the
+    /// bounds will only contain that region. In this case tiles may have indices starting not from 0.
+    pub fn origin(mut self, origin: Point2) -> Self {
+        self.origin = origin;
+        self
+    }
+
+    /// Sets a rectangle in projected coordinates for which tiles are available.
+    ///
+    /// Tiles that lies outside of the bounds will not be requested from the source.
+    ///
+    /// ```
+    /// # use galileo::tile_schema::TileSchemaBuilder;
+    /// # use galileo::galileo_types::cartesian::Rect;
+    /// let tile_schema = TileSchemaBuilder::web_mercator(0..23)
+    ///     // only show tiles for Angola
+    ///     .bounds(Rect::new(1282761., -1975899., 2674573., -590691.))
+    ///     .build()
+    ///     .expect("tile schema is properly defined");
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// If either width or height of the bounds rectangle is `0`, `NaN` or `Infinity`, building the tile schema
+    /// will return an error `TileSchemaError::InvalidBounds`.
+    pub fn bounds(mut self, bounds: Rect) -> Self {
+        self.tile_bounds = bounds;
         self
     }
 }
