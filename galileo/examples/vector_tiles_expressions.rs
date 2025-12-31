@@ -6,13 +6,19 @@ use std::sync::Arc;
 use egui::FontDefinitions;
 use galileo::control::{EventPropagation, MouseButton, UserEvent, UserEventHandler};
 use galileo::layer::data_provider::remove_parameters_modifier;
-use galileo::layer::vector_tile_layer::style::VectorTileStyle;
+use galileo::layer::vector_tile_layer::expressions::{
+    InterpolateExpression, InterpolationArgs, LinearInterpolationArgs, StepExpression, StepValue,
+    StyleValue,
+};
+use galileo::layer::vector_tile_layer::style::{
+    StyleRule, VectorTilePolygonSymbol, VectorTilePointSymbol, VectorTileStyle, VectorTileSymbol
+};
 use galileo::layer::vector_tile_layer::VectorTileLayerBuilder;
 use galileo::layer::VectorTileLayer;
 use galileo::render::text::text_service::TextService;
 use galileo::render::text::RustybuzzRasterizer;
 use galileo::tile_schema::{TileIndex, TileSchema, TileSchemaBuilder};
-use galileo::{Map, MapBuilder};
+use galileo::{Color, Map, MapBuilder};
 use galileo_egui::{EguiMap, EguiMapState};
 use parking_lot::RwLock;
 
@@ -36,11 +42,11 @@ impl eframe::App for App {
             .title_bar(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("Default style").clicked() {
-                        self.set_style(default_style());
-                    }
-                    if ui.button("Interpolated style").clicked() {
+                    if ui.button("Interpolated Style").clicked() {
                         self.set_style(interpolated_style());
+                    }
+                    if ui.button("Stepped Style").clicked() {
+                        self.set_style(stepped_style());
                     }
                 });
             });
@@ -77,7 +83,7 @@ pub(crate) fn run() {
         panic!("Set the MapTiler API key into VT_API_KEY library when building this example");
     };
 
-    let style = default_style();
+    let style = interpolated_style();
     let layer = VectorTileLayerBuilder::new_rest(move |&index: &TileIndex| {
         format!(
             "https://api.maptiler.com/tiles/v3-openmaptiles/{z}/{x}/{y}.pbf?key={api_key}",
@@ -126,77 +132,117 @@ pub(crate) fn run() {
         .expect("failed to initialize");
 }
 
-fn default_style() -> VectorTileStyle {
-    serde_json::from_str(include_str!("data/vt_style.json")).expect("invalid style json")
-}
-
 fn interpolated_style() -> VectorTileStyle {
-    let style_str = r##"
-{
-  "rules": [
-    {
-      "symbol": {
-        "polygon": {
-          "fill_color": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            5,  "#e8f4f8ff",
-            10, "#b3d9e6ff",
-            15, "#7fb3d5ff"
-          ]
-        }
-      }
-    },
-    {
-      "symbol": {
-        "line": {
-          "stroke_color": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            5,  "#d4d4d4ff",
-            10, "#8a8a8aff",
-            15, "#4a4a4aff"
-          ],
-          "width": [
-            "step",
-            ["zoom"],
-            0.5,
-            8, 1.5,
-            12, 3.0,
-            16, 5.0
-          ]
-        }
-      }
-    },
-    {
-      "symbol": {
-        "point": {
-          "color": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            6,  "#ff6b6bff",
-            8, "#ee5a6fff",
-            12, "#c92a2aff"
-          ],
-          "size": [
-            "step",
-            ["zoom"],
-            4.0,
-            10, 10.0,
-            14, 12.0,
-            18, 14.0
-          ]
-        }
-      }
+
+   let default_rule = StyleRule {
+        layer_name: None,
+        min_resolution: None,
+        max_resolution: None,
+        properties: Default::default(),
+
+        symbol: VectorTileSymbol::Polygon(VectorTilePolygonSymbol {
+            fill_color: StyleValue::Steps(
+                StepExpression::new(
+                    Color::from_hex("#cce5ffff"),
+                    vec![
+                        StepValue {
+                            resolution: 50.0,
+                            step_value: Color::from_hex("#99ccffff"),
+                        },
+                        StepValue {
+                            resolution: 200.0,
+                            step_value: Color::from_hex("#6699ffff"),
+                        },
+                    ],
+                )
+                .unwrap(),
+            ),
+        }),
+    };
+    let style_str = StyleRule {
+        layer_name: None,
+        max_resolution: None,
+        min_resolution: None,
+        properties: Default::default(),
+        symbol: VectorTileSymbol::Point(VectorTilePointSymbol {
+            color: StyleValue::Interpolate(InterpolateExpression::new(InterpolationArgs::Linear(
+                LinearInterpolationArgs::new(vec![
+                    StepValue {
+                        resolution: 25.0,
+                        step_value: Color::BLACK,
+                    },
+                    StepValue {
+                        resolution: 200.0,
+                        step_value: Color::RED,
+                    },
+                ])
+                .unwrap(),
+            ))),
+            size: StyleValue::Simple(10.0),
+        }),
+    };
+    VectorTileStyle {
+        rules: vec![default_rule,style_str],
+        background: Color::from_hex("#f0f0f0ff"),
     }
-  ],
-  "background": "#f5f5f5ff"
 }
-"##;
-    serde_json::from_str(style_str).expect("invalid style json")
+fn stepped_style() -> VectorTileStyle {
+
+   let default_rule = StyleRule {
+        layer_name: None,
+        min_resolution: None,
+        max_resolution: None,
+        properties: Default::default(),
+
+        symbol: VectorTileSymbol::Polygon(VectorTilePolygonSymbol {
+            fill_color: StyleValue::Steps(
+                StepExpression::new(
+                    Color::from_hex("#cce5ffff"),
+                    vec![
+                        StepValue {
+                            resolution: 50.0,
+                            step_value: Color::from_hex("#99ccffff"),
+                        },
+                        StepValue {
+                            resolution: 200.0,
+                            step_value: Color::from_hex("#6699ffff"),
+                        },
+                    ],
+                )
+                .unwrap(),
+            ),
+        }),
+    };
+
+    let style_str = StyleRule {
+        layer_name: None,
+        max_resolution: None,
+        min_resolution: None,
+        properties: Default::default(),
+        symbol: VectorTileSymbol::Point(VectorTilePointSymbol {
+            color: StyleValue::Steps(
+                StepExpression::new(
+                    Color::BLUE,
+                    vec![
+                        StepValue {
+                            resolution: 25.0,
+                            step_value: Color::BLACK,
+                        },
+                        StepValue {
+                            resolution: 200.0,
+                            step_value: Color::RED,
+                        },
+                    ],
+                )
+                .unwrap(),
+            ),
+            size: StyleValue::Simple(10.0),
+        }),
+    };
+    VectorTileStyle {
+        rules: vec![default_rule,style_str],
+        background: Color::from_hex("#f0f0f0ff"),
+    }
 }
 
 fn tile_schema() -> TileSchema {

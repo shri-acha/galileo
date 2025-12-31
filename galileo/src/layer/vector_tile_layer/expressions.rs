@@ -101,7 +101,7 @@ pub struct InterpolateExpression<T> {
     interpolation_args: InterpolationArgs<T>,
 }
 /// Type used to define Step Function
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct StepExpression<T> {
     /// Each stop value maps the resolution to the T type
     /// If, the current resolution is greater than step resolution
@@ -121,113 +121,14 @@ struct ResolutionValueRange<T> {
 
 /// StyleValue introduces simple, interpolation and step functions to be used as features that are
 /// evaluated to give color values on the basis of the zoom level
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum StyleValue<T> {
     /// Style variant to wrap interpolate function
     Interpolate(InterpolateExpression<T>),
     /// Style variant to wrap step function
     Steps(StepExpression<T>),
-    /// Style variant simple values(i.e. like Color::BLACK)
+    /// Style variant simple values
     Simple(T),
-}
-
-impl<'de, T> Deserialize<'de> for StyleValue<T>
-where
-    T: for<'a> Deserialize<'a> + Copy,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde_json::Value;
-
-        let value = Value::deserialize(deserializer)?;
-
-        match value {
-            Value::Array(arr) => match arr.first().and_then(|v| v.as_str()) {
-                Some("interpolate") => {
-                    let expr =
-                        InterpolateExpression::from_array(arr).map_err(serde::de::Error::custom)?;
-                    Ok(StyleValue::Interpolate(expr))
-                }
-                Some("step") => {
-                    let expr = StepExpression::from_array(arr).map_err(serde::de::Error::custom)?;
-                    Ok(StyleValue::Steps(expr))
-                }
-                _ => Err(serde::de::Error::custom("Unknown expression")),
-            },
-            other => {
-                let literal =
-                    serde_json::from_value::<T>(other).map_err(serde::de::Error::custom)?;
-                Ok(StyleValue::Simple(literal))
-            }
-        }
-    }
-}
-
-impl<T> InterpolateExpression<T>
-where
-    T: Copy + for<'de> Deserialize<'de>,
-{
-    fn from_array(arr: Vec<serde_json::Value>) -> Result<Self, String> {
-        if arr.len() < 6 {
-            return Err("Invalid interpolate expression".into());
-        }
-        let interpolation_args = match &arr[1] {
-            serde_json::Value::Array(v) if v[0] == "linear" => {
-                InterpolationArgs::Linear(LinearInterpolationArgs::new(parse_step(&arr[3..])?)?)
-            }
-            serde_json::Value::Array(v) if v[0] == "exponential" => {
-                let base = v.get(1).and_then(|b| b.as_i64()).unwrap_or(1) as i32;
-                InterpolationArgs::Exponential(ExponentialInterpolationArgs::new(
-                    base,
-                    parse_step(&arr[3..])?,
-                )?)
-            }
-            _ => return Err("Unsupported interpolation type".into()),
-        };
-        Ok(Self { interpolation_args })
-    }
-}
-
-impl<T> StepExpression<T>
-where
-    T: Copy + for<'de> Deserialize<'de>,
-{
-    fn from_array(arr: Vec<serde_json::Value>) -> Result<Self, String> {
-        if arr.len() < 4 {
-            return Err("Invalid step expression".into());
-        }
-        let default_value = T::deserialize(arr[2].clone()).map_err(|_| "Invalid default value")?;
-        let step_values = parse_step(&arr[3..])?;
-        Self::new(default_value, step_values)
-    }
-}
-
-fn parse_step<T>(raw: &[serde_json::Value]) -> Result<Vec<StepValue<T>>, String>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    if !raw.len().is_multiple_of(2) {
-        return Err("Stops must be pairs".into());
-    }
-
-    let mut out = Vec::new();
-
-    for pair in raw.chunks(2) {
-        let zoom_level = pair[0].as_i64().ok_or("Invalid stop resolution")?;
-
-        let resolution = 156543.03392800014 / 2.0f64.powi(zoom_level as i32);
-
-        let value = T::deserialize(pair[1].clone()).map_err(|_| "Invalid stop value")?;
-
-        out.push(StepValue {
-            resolution,
-            step_value: value,
-        });
-    }
-
-    Ok(out)
 }
 
 impl From<Color> for StyleValue<Color> {
