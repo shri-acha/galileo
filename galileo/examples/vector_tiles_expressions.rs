@@ -11,7 +11,7 @@ use galileo::layer::vector_tile_layer::expressions::{
     StyleValue,
 };
 use galileo::layer::vector_tile_layer::style::{
-    StyleRule, VectorTilePolygonSymbol, VectorTilePointSymbol, VectorTileStyle, VectorTileSymbol
+    StyleRule, VectorTilePointSymbol, VectorTilePolygonSymbol, VectorTileStyle, VectorTileSymbol,
 };
 use galileo::layer::vector_tile_layer::VectorTileLayerBuilder;
 use galileo::layer::VectorTileLayer;
@@ -133,8 +133,7 @@ pub(crate) fn run() {
 }
 
 fn interpolated_style() -> VectorTileStyle {
-
-   let default_rule = StyleRule {
+    let default_rule = StyleRule {
         layer_name: None,
         min_resolution: None,
         max_resolution: None,
@@ -155,7 +154,7 @@ fn interpolated_style() -> VectorTileStyle {
                         },
                     ],
                 )
-                .unwrap(),
+                .expect("Invalid expression!"),
             ),
         }),
     };
@@ -176,19 +175,18 @@ fn interpolated_style() -> VectorTileStyle {
                         step_value: Color::RED,
                     },
                 ])
-                .unwrap(),
+                .expect("Invalid expression!"),
             ))),
             size: StyleValue::Simple(10.0),
         }),
     };
     VectorTileStyle {
-        rules: vec![default_rule,style_str],
+        rules: vec![default_rule, style_str],
         background: Color::from_hex("#f0f0f0ff"),
     }
 }
 fn stepped_style() -> VectorTileStyle {
-
-   let default_rule = StyleRule {
+    let default_rule = StyleRule {
         layer_name: None,
         min_resolution: None,
         max_resolution: None,
@@ -209,7 +207,7 @@ fn stepped_style() -> VectorTileStyle {
                         },
                     ],
                 )
-                .unwrap(),
+                .expect("Invalid expression!"),
             ),
         }),
     };
@@ -234,13 +232,13 @@ fn stepped_style() -> VectorTileStyle {
                         },
                     ],
                 )
-                .unwrap(),
+                .expect("Invalid expression!"),
             ),
             size: StyleValue::Simple(10.0),
         }),
     };
     VectorTileStyle {
-        rules: vec![default_rule,style_str],
+        rules: vec![default_rule, style_str],
         background: Color::from_hex("#f0f0f0ff"),
     }
 }
