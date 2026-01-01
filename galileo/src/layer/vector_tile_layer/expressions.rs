@@ -201,25 +201,25 @@ trait InterpolatableValue: Copy {
     type COMPONENTS;
 
     /// Returns the Iterator for the components used
-    fn iter_channels() -> impl Iterator<Item = Self::COMPONENTS>;
+    fn iter_components() -> impl Iterator<Item = Self::COMPONENTS>;
     /// Returns the Iterator for the components used
-    fn get_component(&self, channel: &Self::COMPONENTS) -> f64;
+    fn get_component(&self, component: &Self::COMPONENTS) -> f64;
     /// Value to be interpolated
-    fn set_component(&mut self, channel: &Self::COMPONENTS, value: f64);
+    fn set_component(&mut self, compnent: &Self::COMPONENTS, value: f64);
 }
 
 impl InterpolatableValue for f64 {
     type COMPONENTS = ();
 
-    fn iter_channels() -> impl Iterator<Item = Self::COMPONENTS> {
+    fn iter_components() -> impl Iterator<Item = Self::COMPONENTS> {
         std::iter::once(())
     }
 
-    fn get_component(&self, _channel: &Self::COMPONENTS) -> f64 {
+    fn get_component(&self, _component: &Self::COMPONENTS) -> f64 {
         *self
     }
 
-    fn set_component(&mut self, _channel: &Self::COMPONENTS, value: f64) {
+    fn set_component(&mut self, _component: &Self::COMPONENTS, value: f64) {
         *self = value
     }
 }
@@ -227,7 +227,7 @@ impl InterpolatableValue for f64 {
 impl InterpolatableValue for Color {
     type COMPONENTS = Channel;
 
-    fn iter_channels() -> impl Iterator<Item = Self::COMPONENTS> {
+    fn iter_components() -> impl Iterator<Item = Self::COMPONENTS> {
         [Channel::R, Channel::G, Channel::B, Channel::A].into_iter()
     }
 
@@ -268,11 +268,11 @@ impl<T: InterpolatableValue> InterpolateExpression<T> {
     fn interpolate_value(&self, current_resolution: f64, rv_range: &ResolutionValueRange<T>) -> T {
         let mut result = rv_range.start_value;
 
-        for channel in T::iter_channels() {
-            let start = rv_range.start_value.get_component(&channel);
-            let end = rv_range.end_value.get_component(&channel);
+        for component in T::iter_components() {
+            let start = rv_range.start_value.get_component(&component);
+            let end = rv_range.end_value.get_component(&component);
 
-            let channel_value = match &self.interpolation_args {
+            let component_value = match &self.interpolation_args {
                 InterpolationArgs::Linear(_) => linear_interpolation(
                     rv_range.min_resolution,
                     rv_range.max_resolution,
@@ -290,7 +290,7 @@ impl<T: InterpolatableValue> InterpolateExpression<T> {
                 ),
             };
 
-            result.set_component(&channel, channel_value);
+            result.set_component(&component, component_value);
         }
 
         result
