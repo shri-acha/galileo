@@ -1,6 +1,8 @@
-//! Module that provides support for step and interpolate expressions for Color and Number types
+//! Module that provides support for step and interpolate expressions for Color and Number
+//! typesexpresion
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
+use std::vec::IntoIter;
 
 use serde::{Deserialize, Serialize};
 
@@ -10,8 +12,10 @@ use crate::Color;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum InterpolationArgs<T> {
     /// Linear variant of interpolation arguments
+    #[serde(rename = "linear")]
     Linear(LinearInterpolationArgs<T>),
     /// Exponential variant of interpolation arguments
+    #[serde(rename = "exponential")]
     Exponential(ExponentialInterpolationArgs<T>),
 }
 
@@ -31,12 +35,12 @@ pub struct LinearInterpolationArgs<T> {
 
 impl<T: Copy> LinearInterpolationArgs<T> {
     /// Returns a new instance of `LinearInterpolationArgs`
-    pub fn new(step_values: Vec<StepValue<T>>) -> Result<Self, String> {
+    pub fn new(step_values: IntoIter<StepValue<T>>) -> Result<Self, String> {
         if step_values.len() < 2 {
             return Err("At least 2 step values required".to_string());
         }
         Ok(Self {
-            step_values: step_values.into_iter().collect::<BTreeSet<_>>(),
+            step_values: step_values.collect::<BTreeSet<_>>(),
         })
     }
 }
@@ -50,7 +54,7 @@ pub struct ExponentialInterpolationArgs<T> {
 
 impl<T: Copy> ExponentialInterpolationArgs<T> {
     /// Returns a new instance of `ExponentialInterpolationArgs`
-    pub fn new(base: i32, step_values: Vec<StepValue<T>>) -> Result<Self, String> {
+    pub fn new(base: i32, step_values: IntoIter<StepValue<T>>) -> Result<Self, String> {
         if base <= 0 {
             return Err("Base must be positive".to_string());
         }
@@ -98,6 +102,7 @@ impl<T> Ord for StepValue<T> {
 /// Type used to define expressions for interpolation
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct InterpolateExpression<T> {
+    #[serde(rename = "interpolate")]
     interpolation_args: InterpolationArgs<T>,
 }
 /// Type used to define Step Function
@@ -107,8 +112,9 @@ pub struct StepExpression<T> {
     /// If, the current resolution is greater than step resolution
     /// the value T maps to the T value where the step resolution is
     /// less than that of current resolution.
-    step_values: BTreeSet<StepValue<T>>,
+    #[serde(rename = "default_value")]
     default_value: T,
+    step_values: BTreeSet<StepValue<T>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -122,6 +128,7 @@ struct ResolutionValueRange<T> {
 /// StyleValue introduces simple, interpolation and step functions to be used as features that are
 /// evaluated to give color values on the basis of the zoom level
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
 pub enum StyleValue<T> {
     /// Style variant to wrap interpolate function
     Interpolate(InterpolateExpression<T>),
@@ -131,15 +138,9 @@ pub enum StyleValue<T> {
     Simple(T),
 }
 
-impl From<Color> for StyleValue<Color> {
-    fn from(color_val: Color) -> Self {
-        Self::Simple(color_val)
-    }
-}
-
-impl From<f64> for StyleValue<f64> {
-    fn from(num: f64) -> Self {
-        Self::Simple(num)
+impl<T> From<T> for StyleValue<T> {
+    fn from(value: T) -> Self {
+        Self::Simple(value)
     }
 }
 
@@ -187,106 +188,112 @@ impl<T> InterpolateExpression<T> {
     }
 }
 
-impl InterpolateExpression<Color> {
-    /// Evaluates Color value of the expression on the basis of the build
-    fn evaluate(&self, current_resolution: f64) -> Color {
-        if let Some(resolution_value_range) = get_resolution_value_range(self, current_resolution) {
-            self.interpolate_color(&resolution_value_range, current_resolution)
-        } else {
-            self.get_boundary_value(current_resolution)
-        }
-    }
-}
-
-impl InterpolateExpression<f64> {
-    /// Evaluates Numeric value of the expression on the basis of the build
-    fn evaluate(&self, current_resolution: f64) -> f64 {
-        if let Some(resolution_value_range) = get_resolution_value_range(self, current_resolution) {
-            self.interpolate_number(&resolution_value_range, current_resolution)
-        } else {
-            self.get_boundary_value(current_resolution)
-        }
-    }
-}
-
-enum Channel {
+pub(crate) enum Channel {
     R,
     G,
     B,
     A,
 }
+/// This trait is used to define interpolatability for a type
+/// on implementing this, `InterpolateExpression` allows for the use of evaluate method.
+trait InterpolatableValue: Copy {
+    /// Value to be interpolated
+    type COMPONENTS;
 
-impl InterpolateExpression<Color> {
-    fn interpolate_color(
-        &self,
-        rv_range: &ResolutionValueRange<Color>,
-        current_resolution: f64,
-    ) -> Color {
-        let channels = [Channel::R, Channel::G, Channel::B, Channel::A];
+    /// Returns the Iterator for the components used
+    fn iter_channels() -> impl Iterator<Item = Self::COMPONENTS>;
+    /// Returns the Iterator for the components used
+    fn get_component(&self, channel: &Self::COMPONENTS) -> f64;
+    /// Value to be interpolated
+    fn set_component(&mut self, channel: &Self::COMPONENTS, value: f64);
+}
 
-        let values: Vec<u8> = channels
-            .iter()
-            .map(|ch| self.interpolate_color_channel(current_resolution, rv_range, ch))
-            .collect::<Vec<_>>();
+impl InterpolatableValue for f64 {
+    type COMPONENTS = ();
 
-        Color::rgba(values[0], values[1], values[2], values[3])
+    fn iter_channels() -> impl Iterator<Item = Self::COMPONENTS> {
+        std::iter::once(())
     }
 
-    fn interpolate_color_channel(
-        &self,
-        current_resolution: f64,
-        rv_range: &ResolutionValueRange<Color>,
-        channel: &Channel,
-    ) -> u8 {
-        let (start, end) = match channel {
-            Channel::R => (rv_range.start_value.r(), rv_range.end_value.r()),
-            Channel::G => (rv_range.start_value.g(), rv_range.end_value.g()),
-            Channel::B => (rv_range.start_value.b(), rv_range.end_value.b()),
-            Channel::A => (rv_range.start_value.a(), rv_range.end_value.a()),
-        };
-        match &self.interpolation_args {
-            InterpolationArgs::Linear(_) => linear_interpolation(
-                rv_range.min_resolution,
-                rv_range.max_resolution,
-                start as f64,
-                end as f64,
-                current_resolution,
-            ) as u8,
-            InterpolationArgs::Exponential(args) => exponential_interpolation(
-                rv_range.min_resolution,
-                rv_range.max_resolution,
-                start as f64,
-                end as f64,
-                current_resolution,
-                args.base,
-            ) as u8,
-        }
+    fn get_component(&self, _channel: &Self::COMPONENTS) -> f64 {
+        *self
+    }
+
+    fn set_component(&mut self, _channel: &Self::COMPONENTS, value: f64) {
+        *self = value
     }
 }
 
-impl InterpolateExpression<f64> {
-    fn interpolate_number(
-        &self,
-        rv_range: &ResolutionValueRange<f64>,
-        current_resolution: f64,
-    ) -> f64 {
-        match &self.interpolation_args {
-            InterpolationArgs::Linear(_) => linear_interpolation(
-                rv_range.min_resolution,
-                rv_range.max_resolution,
-                rv_range.start_value,
-                rv_range.end_value,
-                current_resolution,
-            ),
-            InterpolationArgs::Exponential(args) => exponential_interpolation(
-                rv_range.min_resolution,
-                rv_range.max_resolution,
-                rv_range.start_value,
-                rv_range.end_value,
-                current_resolution,
-                args.base,
-            ),
+impl InterpolatableValue for Color {
+    type COMPONENTS = Channel;
+
+    fn iter_channels() -> impl Iterator<Item = Self::COMPONENTS> {
+        [Channel::R, Channel::G, Channel::B, Channel::A].into_iter()
+    }
+
+    fn get_component(&self, channel: &Self::COMPONENTS) -> f64 {
+        let val = match channel {
+            Channel::R => self.r(),
+            Channel::G => self.g(),
+            Channel::B => self.b(),
+            Channel::A => self.a(),
+        };
+
+        val as f64
+    }
+
+    fn set_component(&mut self, channel: &Self::COMPONENTS, value: f64) {
+        let val = value as u8;
+        let [mut r, mut g, mut b, mut a] = self.to_u8_array();
+        match channel {
+            Channel::R => r = val,
+            Channel::G => g = val,
+            Channel::B => b = val,
+            Channel::A => a = val,
         }
+
+        *self = Color::rgba(r, g, b, a)
+    }
+}
+#[allow(private_bounds)]
+impl<T: InterpolatableValue> InterpolateExpression<T> {
+    fn evaluate(&self, current_resolution: f64) -> T {
+        if let Some(resolution_value_range) = get_resolution_value_range(self, current_resolution) {
+            self.interpolate_value(current_resolution, &resolution_value_range)
+        } else {
+            self.get_boundary_value(current_resolution)
+        }
+    }
+
+    fn interpolate_value(&self, current_resolution: f64, rv_range: &ResolutionValueRange<T>) -> T {
+        let mut result = rv_range.start_value;
+
+        for channel in T::iter_channels() {
+            let start = rv_range.start_value.get_component(&channel);
+            let end = rv_range.end_value.get_component(&channel);
+
+            let channel_value = match &self.interpolation_args {
+                InterpolationArgs::Linear(_) => linear_interpolation(
+                    rv_range.min_resolution,
+                    rv_range.max_resolution,
+                    start,
+                    end,
+                    current_resolution,
+                ),
+                InterpolationArgs::Exponential(args) => exponential_interpolation(
+                    rv_range.min_resolution,
+                    rv_range.max_resolution,
+                    start,
+                    end,
+                    current_resolution,
+                    args.base,
+                ),
+            };
+
+            result.set_component(&channel, channel_value);
+        }
+
+        result
     }
 }
 
@@ -342,13 +349,13 @@ fn get_resolution_value_range<T: Copy>(
 
 impl<T: Copy> StepExpression<T> {
     /// Returns a new instance of `StepExpression`
-    pub fn new(default_value: T, step_values: Vec<StepValue<T>>) -> Result<Self, String> {
-        if step_values.is_empty() {
+    pub fn new(default_value: T, step_values: IntoIter<StepValue<T>>) -> Result<Self, String> {
+        if step_values.len() == 0 {
             return Err("At least 1 step value required".to_string());
         }
         Ok(Self {
             default_value,
-            step_values: step_values.into_iter().collect::<BTreeSet<_>>(),
+            step_values: step_values.collect::<BTreeSet<_>>(),
         })
     }
 }
@@ -391,16 +398,19 @@ mod number_tests {
 
     #[test]
     fn test_get_resolution_value_range_out_of_bounds_f64() {
-        let args = LinearInterpolationArgs::new(vec![
-            StepValue {
-                resolution: 25.0,
-                step_value: 0.0,
-            },
-            StepValue {
-                resolution: 50.0,
-                step_value: 100.0,
-            },
-        ])
+        let args: LinearInterpolationArgs<f64> = LinearInterpolationArgs::new(
+            vec![
+                StepValue {
+                    resolution: 25.0,
+                    step_value: 0.0,
+                },
+                StepValue {
+                    resolution: 50.0,
+                    step_value: 100.0,
+                },
+            ]
+            .into_iter(),
+        )
         .expect("failed to create interpolation arguments");
 
         let expr = InterpolateExpression {
@@ -413,16 +423,19 @@ mod number_tests {
 
     #[test]
     fn linear_interpolation_bounds_f64() {
-        let args = LinearInterpolationArgs::new(vec![
-            StepValue {
-                resolution: 25.0,
-                step_value: 0.0,
-            },
-            StepValue {
-                resolution: 50.0,
-                step_value: 100.0,
-            },
-        ])
+        let args: LinearInterpolationArgs<f64> = LinearInterpolationArgs::new(
+            vec![
+                StepValue {
+                    resolution: 25.0,
+                    step_value: 0.0,
+                },
+                StepValue {
+                    resolution: 50.0,
+                    step_value: 100.0,
+                },
+            ]
+            .into_iter(),
+        )
         .expect("failed to create interpolation arguments");
 
         let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
@@ -433,16 +446,19 @@ mod number_tests {
 
     #[test]
     fn linear_interpolation_unordered_f64() {
-        let args = LinearInterpolationArgs::new(vec![
-            StepValue {
-                resolution: 50.0,
-                step_value: 100.0,
-            },
-            StepValue {
-                resolution: 0.0,
-                step_value: 0.0,
-            },
-        ])
+        let args: LinearInterpolationArgs<f64> = LinearInterpolationArgs::new(
+            vec![
+                StepValue {
+                    resolution: 50.0,
+                    step_value: 100.0,
+                },
+                StepValue {
+                    resolution: 0.0,
+                    step_value: 0.0,
+                },
+            ]
+            .into_iter(),
+        )
         .expect("failed to create interpolation arguments");
 
         let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
@@ -452,16 +468,19 @@ mod number_tests {
 
     #[test]
     fn linear_interpolation_f64() {
-        let args = LinearInterpolationArgs::new(vec![
-            StepValue {
-                resolution: 0.0,
-                step_value: 0.0,
-            },
-            StepValue {
-                resolution: 50.0,
-                step_value: 100.0,
-            },
-        ])
+        let args: LinearInterpolationArgs<f64> = LinearInterpolationArgs::new(
+            vec![
+                StepValue {
+                    resolution: 0.0,
+                    step_value: 0.0,
+                },
+                StepValue {
+                    resolution: 50.0,
+                    step_value: 100.0,
+                },
+            ]
+            .into_iter(),
+        )
         .expect("failed to create interpolation arguments");
 
         let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
@@ -471,7 +490,7 @@ mod number_tests {
 
     #[test]
     fn exponential_bounds_f64() {
-        let args = ExponentialInterpolationArgs::new(
+        let args: ExponentialInterpolationArgs<f64> = ExponentialInterpolationArgs::new(
             2,
             vec![
                 StepValue {
@@ -482,7 +501,8 @@ mod number_tests {
                     resolution: 50.0,
                     step_value: 100.0,
                 },
-            ],
+            ]
+            .into_iter(),
         )
         .expect("failed to create interpolation arguments");
 
@@ -494,7 +514,7 @@ mod number_tests {
 
     #[test]
     fn exponential_interpolation_unordered_f64() {
-        let args = ExponentialInterpolationArgs::new(
+        let args: ExponentialInterpolationArgs<f64> = ExponentialInterpolationArgs::new(
             2,
             vec![
                 StepValue {
@@ -509,7 +529,8 @@ mod number_tests {
                     resolution: 75.0,
                     step_value: 200.0,
                 },
-            ],
+            ]
+            .into_iter(),
         )
         .expect("failed to create interpolation arguments");
 
@@ -521,7 +542,7 @@ mod number_tests {
 
     #[test]
     fn exponential_interpolation_f64() {
-        let args = ExponentialInterpolationArgs::new(
+        let args: ExponentialInterpolationArgs<f64> = ExponentialInterpolationArgs::new(
             2,
             vec![
                 StepValue {
@@ -536,7 +557,8 @@ mod number_tests {
                     resolution: 75.0,
                     step_value: 200.0,
                 },
-            ],
+            ]
+            .into_iter(),
         )
         .expect("failed to create interpolation arguments");
 
@@ -548,7 +570,7 @@ mod number_tests {
 
     #[test]
     fn test_step_expression_bounds_f64() {
-        let expr = StepExpression::<f64>::new(
+        let expr: StepExpression<f64> = StepExpression::new(
             10.0,
             vec![
                 StepValue {
@@ -559,7 +581,8 @@ mod number_tests {
                     resolution: 20.0,
                     step_value: 30.0,
                 },
-            ],
+            ]
+            .into_iter(),
         )
         .expect("failed to create step expression");
 
@@ -569,7 +592,7 @@ mod number_tests {
 
     #[test]
     fn test_step_expression_f64() {
-        let expr = StepExpression::<f64>::new(
+        let expr: StepExpression<f64> = StepExpression::new(
             10.0,
             vec![
                 StepValue {
@@ -584,7 +607,8 @@ mod number_tests {
                     resolution: 30.0,
                     step_value: 40.0,
                 },
-            ],
+            ]
+            .into_iter(),
         )
         .expect("failed to create step expression");
 
@@ -599,16 +623,19 @@ mod color_tests {
 
     #[test]
     fn test_get_resolution_value_range_out_of_bounds() {
-        let args = LinearInterpolationArgs::new(vec![
-            StepValue {
-                resolution: 25.0,
-                step_value: Color::rgba(0, 0, 0, 0),
-            },
-            StepValue {
-                resolution: 50.0,
-                step_value: Color::rgba(128, 128, 128, 128),
-            },
-        ])
+        let args: LinearInterpolationArgs<Color> = LinearInterpolationArgs::new(
+            vec![
+                StepValue {
+                    resolution: 25.0,
+                    step_value: Color::rgba(0, 0, 0, 0),
+                },
+                StepValue {
+                    resolution: 50.0,
+                    step_value: Color::rgba(128, 128, 128, 128),
+                },
+            ]
+            .into_iter(),
+        )
         .expect("failed to create interpolation arguments");
 
         let expr = InterpolateExpression {
@@ -621,16 +648,19 @@ mod color_tests {
 
     #[test]
     fn linear_interpolation_bounds() {
-        let args = LinearInterpolationArgs::new(vec![
-            StepValue {
-                resolution: 25.0,
-                step_value: Color::rgba(0, 0, 0, 0),
-            },
-            StepValue {
-                resolution: 50.0,
-                step_value: Color::rgba(128, 128, 128, 128),
-            },
-        ])
+        let args: LinearInterpolationArgs<Color> = LinearInterpolationArgs::new(
+            vec![
+                StepValue {
+                    resolution: 25.0,
+                    step_value: Color::rgba(0, 0, 0, 0),
+                },
+                StepValue {
+                    resolution: 50.0,
+                    step_value: Color::rgba(128, 128, 128, 128),
+                },
+            ]
+            .into_iter(),
+        )
         .expect("failed to create interpolation arguments");
 
         let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
@@ -641,16 +671,19 @@ mod color_tests {
 
     #[test]
     fn linear_interpolation_unordered() {
-        let args = LinearInterpolationArgs::new(vec![
-            StepValue {
-                resolution: 50.0,
-                step_value: Color::rgba(128, 128, 128, 128),
-            },
-            StepValue {
-                resolution: 0.0,
-                step_value: Color::rgba(0, 0, 0, 0),
-            },
-        ])
+        let args: LinearInterpolationArgs<Color> = LinearInterpolationArgs::new(
+            vec![
+                StepValue {
+                    resolution: 50.0,
+                    step_value: Color::rgba(128, 128, 128, 128),
+                },
+                StepValue {
+                    resolution: 0.0,
+                    step_value: Color::rgba(0, 0, 0, 0),
+                },
+            ]
+            .into_iter(),
+        )
         .expect("failed to create interpolation arguments");
 
         let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
@@ -660,16 +693,19 @@ mod color_tests {
 
     #[test]
     fn linear_interpolation() {
-        let args = LinearInterpolationArgs::new(vec![
-            StepValue {
-                resolution: 0.0,
-                step_value: Color::rgba(0, 0, 0, 0),
-            },
-            StepValue {
-                resolution: 50.0,
-                step_value: Color::rgba(128, 128, 128, 128),
-            },
-        ])
+        let args: LinearInterpolationArgs<Color> = LinearInterpolationArgs::new(
+            vec![
+                StepValue {
+                    resolution: 0.0,
+                    step_value: Color::rgba(0, 0, 0, 0),
+                },
+                StepValue {
+                    resolution: 50.0,
+                    step_value: Color::rgba(128, 128, 128, 128),
+                },
+            ]
+            .into_iter(),
+        )
         .expect("failed to create interpolation arguments");
 
         let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
@@ -679,7 +715,7 @@ mod color_tests {
 
     #[test]
     fn exponential_bounds() {
-        let args = ExponentialInterpolationArgs::new(
+        let args: ExponentialInterpolationArgs<Color> = ExponentialInterpolationArgs::new(
             2,
             vec![
                 StepValue {
@@ -690,7 +726,8 @@ mod color_tests {
                     resolution: 50.0,
                     step_value: Color::rgba(128, 128, 128, 128),
                 },
-            ],
+            ]
+            .into_iter(),
         )
         .expect("failed to create interpolation arguments");
 
@@ -702,7 +739,7 @@ mod color_tests {
 
     #[test]
     fn exponential_interpolation_unordered() {
-        let args = ExponentialInterpolationArgs::new(
+        let args: ExponentialInterpolationArgs<Color> = ExponentialInterpolationArgs::new(
             2,
             vec![
                 StepValue {
@@ -717,7 +754,8 @@ mod color_tests {
                     resolution: 75.0,
                     step_value: Color::rgba(200, 200, 200, 200),
                 },
-            ],
+            ]
+            .into_iter(),
         )
         .expect("failed to create interpolation arguments");
 
@@ -729,7 +767,7 @@ mod color_tests {
 
     #[test]
     fn exponential_interpolation() {
-        let args = ExponentialInterpolationArgs::new(
+        let args: ExponentialInterpolationArgs<Color> = ExponentialInterpolationArgs::new(
             2,
             vec![
                 StepValue {
@@ -744,7 +782,8 @@ mod color_tests {
                     resolution: 75.0,
                     step_value: Color::rgba(200, 200, 200, 200),
                 },
-            ],
+            ]
+            .into_iter(),
         )
         .expect("failed to create interpolation arguments");
 
@@ -767,7 +806,8 @@ mod color_tests {
                     resolution: 20.0,
                     step_value: Color::from_hex("#1d1d1d"),
                 },
-            ],
+            ]
+            .into_iter(),
         )
         .expect("failed to create step expression");
 
@@ -792,7 +832,8 @@ mod color_tests {
                     resolution: 30.0,
                     step_value: Color::from_hex("#1a1a1a"),
                 },
-            ],
+            ]
+            .into_iter(),
         )
         .expect("failed to create step expression");
 

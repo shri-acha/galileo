@@ -6,19 +6,13 @@ use std::sync::Arc;
 use egui::FontDefinitions;
 use galileo::control::{EventPropagation, MouseButton, UserEvent, UserEventHandler};
 use galileo::layer::data_provider::remove_parameters_modifier;
-use galileo::layer::vector_tile_layer::expressions::{
-    InterpolateExpression, InterpolationArgs, LinearInterpolationArgs, StepExpression, StepValue,
-    StyleValue,
-};
-use galileo::layer::vector_tile_layer::style::{
-    StyleRule, VectorTilePointSymbol, VectorTilePolygonSymbol, VectorTileStyle, VectorTileSymbol,
-};
+use galileo::layer::vector_tile_layer::style::VectorTileStyle;
 use galileo::layer::vector_tile_layer::VectorTileLayerBuilder;
 use galileo::layer::VectorTileLayer;
 use galileo::render::text::text_service::TextService;
 use galileo::render::text::RustybuzzRasterizer;
 use galileo::tile_schema::{TileIndex, TileSchema, TileSchemaBuilder};
-use galileo::{Color, Map, MapBuilder};
+use galileo::{Map, MapBuilder};
 use galileo_egui::{EguiMap, EguiMapState};
 use parking_lot::RwLock;
 
@@ -42,11 +36,14 @@ impl eframe::App for App {
             .title_bar(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("Interpolated Style").clicked() {
-                        self.set_style(interpolated_style());
+                    if ui.button("Linear Interpolation").clicked() {
+                        self.set_style(linear_interpolation_style());
                     }
-                    if ui.button("Stepped Style").clicked() {
-                        self.set_style(stepped_style());
+                    if ui.button("Exponential Interpolation").clicked() {
+                        self.set_style(exponential_interpolation_style());
+                    }
+                    if ui.button("Stepped Interpolation").clicked() {
+                        self.set_style(stepped_interpolation_style());
                     }
                 });
             });
@@ -83,7 +80,8 @@ pub(crate) fn run() {
         panic!("Set the MapTiler API key into VT_API_KEY library when building this example");
     };
 
-    let style = interpolated_style();
+    let style =
+        serde_json::from_str(include_str!("data/vt_style.json")).expect("invalid style json");
     let layer = VectorTileLayerBuilder::new_rest(move |&index: &TileIndex| {
         format!(
             "https://api.maptiler.com/tiles/v3-openmaptiles/{z}/{x}/{y}.pbf?key={api_key}",
@@ -132,115 +130,105 @@ pub(crate) fn run() {
         .expect("failed to initialize");
 }
 
-fn interpolated_style() -> VectorTileStyle {
-    let default_rule = StyleRule {
-        layer_name: None,
-        min_resolution: None,
-        max_resolution: None,
-        properties: Default::default(),
-
-        symbol: VectorTileSymbol::Polygon(VectorTilePolygonSymbol {
-            fill_color: StyleValue::Steps(
-                StepExpression::new(
-                    Color::from_hex("#cce5ffff"),
-                    vec![
-                        StepValue {
-                            resolution: 50.0,
-                            step_value: Color::from_hex("#99ccffff"),
-                        },
-                        StepValue {
-                            resolution: 200.0,
-                            step_value: Color::from_hex("#6699ffff"),
-                        },
-                    ],
-                )
-                .expect("Invalid expression!"),
-            ),
-        }),
-    };
-    let style_str = StyleRule {
-        layer_name: None,
-        max_resolution: None,
-        min_resolution: None,
-        properties: Default::default(),
-        symbol: VectorTileSymbol::Point(VectorTilePointSymbol {
-            color: StyleValue::Interpolate(InterpolateExpression::new(InterpolationArgs::Linear(
-                LinearInterpolationArgs::new(vec![
-                    StepValue {
-                        resolution: 25.0,
-                        step_value: Color::BLACK,
-                    },
-                    StepValue {
-                        resolution: 200.0,
-                        step_value: Color::RED,
-                    },
-                ])
-                .expect("Invalid expression!"),
-            ))),
-            size: StyleValue::Simple(10.0),
-        }),
-    };
-    VectorTileStyle {
-        rules: vec![default_rule, style_str],
-        background: Color::from_hex("#f0f0f0ff"),
+fn stepped_interpolation_style() -> VectorTileStyle {
+    let stepped_interpolation_rule = r##"{
+  "rules": [
+    {
+      "symbol": {
+        "line": {
+          "stroke_color": "#000000ff",
+          "width": 0.75
+        }
+      }
+    },
+    {
+      "symbol": {
+        "polygon": {
+          "fill_color": {
+            "default_value": "#00ff00ff",
+            "step_values": [
+              {"resolution": 200.0, "step_value": "#ff0000ff"},
+              {"resolution": 400.0, "step_value": "#00ff00ff"},
+              {"resolution": 600.0, "step_value": "#ff0ff0ff"}
+            ]
+          }
+        }
+      }
     }
+  ],
+  "background": "#ffffffff"
+}"##;
+    serde_json::from_str(stepped_interpolation_rule).expect("invalid style json")
 }
-fn stepped_style() -> VectorTileStyle {
-    let default_rule = StyleRule {
-        layer_name: None,
-        min_resolution: None,
-        max_resolution: None,
-        properties: Default::default(),
 
-        symbol: VectorTileSymbol::Polygon(VectorTilePolygonSymbol {
-            fill_color: StyleValue::Steps(
-                StepExpression::new(
-                    Color::from_hex("#cce5ffff"),
-                    vec![
-                        StepValue {
-                            resolution: 50.0,
-                            step_value: Color::from_hex("#99ccffff"),
-                        },
-                        StepValue {
-                            resolution: 200.0,
-                            step_value: Color::from_hex("#6699ffff"),
-                        },
-                    ],
-                )
-                .expect("Invalid expression!"),
-            ),
-        }),
-    };
-
-    let style_str = StyleRule {
-        layer_name: None,
-        max_resolution: None,
-        min_resolution: None,
-        properties: Default::default(),
-        symbol: VectorTileSymbol::Point(VectorTilePointSymbol {
-            color: StyleValue::Steps(
-                StepExpression::new(
-                    Color::BLUE,
-                    vec![
-                        StepValue {
-                            resolution: 25.0,
-                            step_value: Color::BLACK,
-                        },
-                        StepValue {
-                            resolution: 200.0,
-                            step_value: Color::RED,
-                        },
-                    ],
-                )
-                .expect("Invalid expression!"),
-            ),
-            size: StyleValue::Simple(10.0),
-        }),
-    };
-    VectorTileStyle {
-        rules: vec![default_rule, style_str],
-        background: Color::from_hex("#f0f0f0ff"),
+fn linear_interpolation_style() -> VectorTileStyle {
+    let linear_interpolation_rule = r##"{
+  "rules": [
+    {
+      "symbol": {
+        "line": {
+          "stroke_color": "#000000ff",
+          "width": 0.75
+        }
+      }
+    },
+    {
+      "symbol": {
+        "polygon": {
+          "fill_color": {
+            "interpolate": {
+                "linear":{
+                    "step_values": [
+                      {"resolution": 200.0, "step_value": "#ff0000ff"},
+                      {"resolution": 400.0, "step_value": "#00ff00ff"},
+                      {"resolution": 600.0, "step_value": "#ff0ff0ff"}
+                    ]
+                }
+            }
+          }
+        }
+      }
     }
+  ],
+  "background": "#ffffffff"
+}"##;
+    serde_json::from_str(linear_interpolation_rule).expect("invalid style json")
+}
+
+fn exponential_interpolation_style() -> VectorTileStyle {
+    let exponential_interpolation_rule = r##"{
+  "rules": [
+    {
+      "symbol": {
+        "line": {
+          "stroke_color": "#000000ff",
+          "width": 0.75
+        }
+      }
+    },
+    {
+      "symbol": {
+        "polygon": {
+          "fill_color": {
+            "interpolate": {
+            "exponential":{
+                "base": 2,
+                "step_values": [
+                      {"resolution": 200.0, "step_value": "#ff0000ff"},
+                      {"resolution": 400.0, "step_value": "#00ff00ff"},
+                      {"resolution": 600.0, "step_value": "#ff0ff0ff"}
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "background": "#ffffffff"
+}"##;
+
+    serde_json::from_str(exponential_interpolation_rule).expect("invalid style json")
 }
 
 fn tile_schema() -> TileSchema {
