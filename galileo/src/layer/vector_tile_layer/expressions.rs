@@ -7,7 +7,6 @@ use std::vec::IntoIter;
 use serde::{Deserialize, Serialize};
 
 use crate::Color;
-
 /// Wrapper over arguments for Interpolation Functions
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum InterpolationArgs<T> {
@@ -205,7 +204,7 @@ trait InterpolatableValue: Copy {
     /// Returns the Iterator for the components used
     fn get_component(&self, component: &Self::COMPONENTS) -> f64;
     /// Value to be interpolated
-    fn set_component(&mut self, compnent: &Self::COMPONENTS, value: f64);
+    fn set_component(&mut self, component: &Self::COMPONENTS, value: f64);
 }
 
 impl InterpolatableValue for f64 {
