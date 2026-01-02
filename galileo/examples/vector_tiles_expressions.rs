@@ -206,7 +206,7 @@ fn exponential_interpolation_style() -> StyleRule {
 
 fn tile_schema() -> TileSchema {
     TileSchemaBuilder::web_mercator(2..16)
-        .with_rect_tile_size(1024)
+        .rect_tile_size(1024)
         .build()
         .expect("invalid tile schema")
 }
