@@ -50,6 +50,13 @@ impl eframe::App for App {
     }
 }
 
+fn with_overlay_rule(overlay: StyleRule) -> VectorTileStyle {
+    let mut base: VectorTileStyle =
+        serde_json::from_str(include_str!("data/vt_style.json")).expect("invalid style json");
+    base.rules.insert(0, overlay);
+    base
+}
+
 impl App {
     fn new(egui_map_state: EguiMapState, layer: Arc<RwLock<VectorTileLayer>>) -> Self {
         let fonts = FontDefinitions::default();
@@ -64,13 +71,6 @@ impl App {
             map: egui_map_state,
             layer,
         }
-    }
-
-    fn with_overlay_rule(overlay: StyleRule) -> VectorTileStyle {
-        let mut base: VectorTileStyle =
-            serde_json::from_str(include_str!("data/vt_style.json")).expect("invalid style json");
-        base.rules.insert(0, overlay);
-        base
     }
 
     fn set_style(&mut self, style: VectorTileStyle) {
