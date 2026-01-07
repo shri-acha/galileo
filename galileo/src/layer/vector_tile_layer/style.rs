@@ -3,6 +3,7 @@
 use galileo_mvt::{MvtFeature, MvtGeometry};
 use serde::{Deserialize, Serialize};
 
+use crate::layer::vector_tile_layer::expressions::StyleValue;
 use crate::render::point_paint::PointPaint;
 use crate::render::text::TextStyle;
 use crate::render::{LineCap, LinePaint, PolygonPaint};
@@ -266,34 +267,41 @@ impl VectorTileSymbol {
 }
 
 /// Symbol for point geometries.
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VectorTilePointSymbol {
     /// Size of the point.
-    pub size: f64,
+    pub size: StyleValue<f64>,
     /// Color of the point.
-    pub color: Color,
+    pub color: StyleValue<Color>,
 }
 
-impl From<VectorTilePointSymbol> for PointPaint<'_> {
-    fn from(value: VectorTilePointSymbol) -> Self {
-        PointPaint::circle(value.color, value.size as f32)
+impl VectorTilePointSymbol {
+    pub(crate) fn to_paint(
+        &self,
+        current_resolution: f64,
+        _feature: &MvtFeature,
+    ) -> PointPaint<'_> {
+        PointPaint::circle(
+            self.color.get_value(current_resolution),
+            self.size.get_value(current_resolution) as f32,
+        )
     }
 }
 
 /// Symbol for line geometries.
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VectorTileLineSymbol {
     /// Width of the line in pixels.
-    pub width: f64,
+    pub width: StyleValue<f64>,
     /// Color of the line in pixels.
-    pub stroke_color: Color,
+    pub stroke_color: StyleValue<Color>,
 }
 
-impl From<VectorTileLineSymbol> for LinePaint {
-    fn from(value: VectorTileLineSymbol) -> Self {
-        Self {
-            color: value.stroke_color,
-            width: value.width,
+impl VectorTileLineSymbol {
+    pub(crate) fn to_paint(&self, current_resolution: f64, _feature: &MvtFeature) -> LinePaint {
+        LinePaint {
+            color: self.stroke_color.get_value(current_resolution),
+            width: self.width.get_value(current_resolution),
             offset: 0.0,
             line_cap: LineCap::Butt,
         }
@@ -301,16 +309,16 @@ impl From<VectorTileLineSymbol> for LinePaint {
 }
 
 /// Symbol for polygon geometries.
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VectorTilePolygonSymbol {
     /// Color of the fill of polygon.
-    pub fill_color: Color,
+    pub fill_color: StyleValue<Color>,
 }
 
-impl From<VectorTilePolygonSymbol> for PolygonPaint {
-    fn from(value: VectorTilePolygonSymbol) -> Self {
-        Self {
-            color: value.fill_color,
+impl VectorTilePolygonSymbol {
+    pub(crate) fn to_paint(&self, current_resolution: f64, _feature: &MvtFeature) -> PolygonPaint {
+        PolygonPaint {
+            color: self.fill_color.get_value(current_resolution),
         }
     }
 }
@@ -331,8 +339,8 @@ mod tests {
     #[test]
     fn symbol_serialization_point() {
         let symbol = VectorTileSymbol::Point(VectorTilePointSymbol {
-            size: 10.0,
-            color: Color::BLACK,
+            size: 10.0.into(),
+            color: Color::BLACK.into(),
         });
 
         let _json = serde_json::to_string_pretty(&symbol).unwrap();
