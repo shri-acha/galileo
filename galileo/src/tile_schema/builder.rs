@@ -14,7 +14,8 @@ use super::schema::{TileSchema, VerticalDirection};
 #[derive(Debug)]
 pub struct TileSchemaBuilder {
     origin: Point2,
-    bounds: Rect,
+    world_bounds: Rect,
+    tile_bounds: Rect,
     lods: Lods,
     tile_width: u32,
     tile_height: u32,
@@ -29,7 +30,7 @@ enum Lods {
 }
 
 /// Errors that can occur during building a [`TileSchema`].
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq, Clone)]
 pub enum TileSchemaError {
     /// No zoom levels provided
     #[error("no zoom levels provided")]
@@ -68,15 +69,34 @@ pub enum TileSchemaError {
         /// Resolution of the `lower_level`
         lower_resolution: f64,
     },
+
+    /// Tile bounds have invalid value
+    #[error("tile bounds have zero size or not finite: {0:?}")]
+    InvalidTileBounds(Rect),
+
+    /// World bounds have invalid value
+    #[error("world bounds have zero size or not finite: {0:?}")]
+    InvalidWorldBounds(Rect),
 }
 
 impl TileSchemaBuilder {
     /// Create a new builder with default parameters.
     pub fn build(self) -> Result<TileSchema, TileSchemaError> {
+        if !self.tile_bounds.width().is_normal() || !self.tile_bounds.height().is_normal() {
+            return Err(TileSchemaError::InvalidTileBounds(self.tile_bounds));
+        }
+
+        if self.wrap_x
+            && matches!(self.lods, Lods::Logarithmic(_))
+            && (!self.world_bounds.width().is_normal() || !self.world_bounds.height().is_normal())
+        {
+            return Err(TileSchemaError::InvalidWorldBounds(self.world_bounds));
+        }
+
         // Resolution is bound by the maximum tile index that can be represented
         let min_resolution = f64::min(
-            self.bounds.width() / self.tile_width as f64 / u64::MAX as f64,
-            self.bounds.height() / self.tile_height as f64 / u64::MAX as f64,
+            self.world_bounds.width() / self.tile_width as f64 / i64::MAX as f64,
+            self.world_bounds.height() / self.tile_height as f64 / i64::MAX as f64,
         );
 
         let lods = match self.lods {
@@ -85,7 +105,7 @@ impl TileSchemaBuilder {
                     return Err(TileSchemaError::NoZLevelsProvided);
                 }
 
-                let top_resolution = self.bounds.width() / self.tile_width as f64;
+                let top_resolution = self.world_bounds.width() / self.tile_width as f64;
 
                 let max_z_level = *z_levels.iter().max().unwrap_or(&0);
                 let mut lods = vec![f64::MAX; max_z_level as usize + 1];
@@ -161,7 +181,8 @@ impl TileSchemaBuilder {
 
         Ok(TileSchema {
             origin: self.origin,
-            bounds: self.bounds,
+            tile_bounds: self.tile_bounds,
+            world_bounds: self.world_bounds,
             lods: Arc::new(lods),
             tile_width: self.tile_width,
             tile_height: self.tile_height,
@@ -175,8 +196,8 @@ impl TileSchemaBuilder {
         const TILE_SIZE: u32 = 256;
 
         Self::web_mercator_base()
-            .with_logarithmic_z_levels(z_levels)
-            .with_rect_tile_size(TILE_SIZE)
+            .logarithmic_z_levels(z_levels)
+            .rect_tile_size(TILE_SIZE)
     }
 
     fn web_mercator_base() -> Self {
@@ -184,7 +205,13 @@ impl TileSchemaBuilder {
 
         Self {
             origin: Point2::new(-MAX_COORD_VALUE, MAX_COORD_VALUE),
-            bounds: Rect::new(
+            world_bounds: Rect::new(
+                -MAX_COORD_VALUE,
+                -MAX_COORD_VALUE,
+                MAX_COORD_VALUE,
+                MAX_COORD_VALUE,
+            ),
+            tile_bounds: Rect::new(
                 -MAX_COORD_VALUE,
                 -MAX_COORD_VALUE,
                 MAX_COORD_VALUE,
@@ -198,15 +225,44 @@ impl TileSchemaBuilder {
         }
     }
 
-    /// Set both tile width and height to `tile_size`.
-    pub fn with_rect_tile_size(mut self, tile_size: u32) -> Self {
+    /// Set both tile width and height to `tile_size` in pixels.
+    pub fn rect_tile_size(mut self, tile_size: u32) -> Self {
         self.tile_width = tile_size;
         self.tile_height = tile_size;
 
         self
     }
 
-    fn with_logarithmic_z_levels(mut self, z_levels: impl IntoIterator<Item = u32>) -> Self {
+    /// Set width of the tiles in pixels.
+    pub fn tile_width(mut self, width: u32) -> Self {
+        self.tile_width = width;
+        self
+    }
+
+    /// Set height of the tiles in pixels.
+    pub fn tile_height(mut self, height: u32) -> Self {
+        self.tile_height = height;
+        self
+    }
+
+    /// Set z-levels of the tile schema with the logarithmic scale with base 2.
+    ///
+    /// This is the usual approach for most tile schemas to approach the levels of detail. It
+    /// considers the top level with z-index `0` to be a single tile that includes the whole
+    /// world map. Then the next level divides this tile into 4 parts (2x2 along x and y axis).
+    /// Next level further divides every tile into 4 and so on.
+    ///
+    /// With this approach the whole world map is divided into `2^z_level` tiles along each axis.
+    /// The resolution for each level is calculated accordingly.
+    ///
+    /// For the builder to be able to calculate logarithmic scale, it must have world bounds
+    /// specified correctly.
+    ///
+    /// The max z-level that can be set with logarithmic scale is limited by the number of X and Y
+    /// indices that can be expressed with `i64`, which for tiles of size 256 pixels in Web Mercator
+    /// projection equals `63`. If you have tiles with z-indices larger than this value, use `z-levels`
+    /// method instead to set resolutions manually.
+    pub fn logarithmic_z_levels(mut self, z_levels: impl IntoIterator<Item = u32>) -> Self {
         self.lods = Lods::Logarithmic(z_levels.into_iter().collect());
 
         self
@@ -217,7 +273,7 @@ impl TileSchemaBuilder {
     /// Z-levels are given as tuples of `(z-index, resolution)`. Smaller z-indexes must correspond
     /// to larger resolution values. If z-levels are not sorted correctly, building the tile schema
     /// would result in [`TileSchemaError::NotSortedZLevels`] error.
-    pub fn with_z_levels(mut self, z_levels: impl IntoIterator<Item = (u32, f64)>) -> Self {
+    pub fn z_levels(mut self, z_levels: impl IntoIterator<Item = (u32, f64)>) -> Self {
         self.lods = Lods::Custom(z_levels.into_iter().collect());
         self
     }
@@ -229,17 +285,105 @@ impl TileSchemaBuilder {
     /// or increasing x coordinate by the whole number of bounding box widths. This produces an effect of
     /// horizontally infinite map, where a user can pan as log as they want to the right or left.
     ///
-    /// Note, that for wrapping to work property, bounds of the tile schema should cover the whole globe.
+    /// Note, that for wrapping to work property, world bounds of the tile schema should cover the whole globe.
     /// This is not enforced in `.build()` method validatation since tile schema is agnostic to the CRS
     /// it will be used for.
     pub fn wrap_x(mut self, shall_wrap: bool) -> Self {
         self.wrap_x = shall_wrap;
         self
     }
+
+    /// Sets the origin point of the tiles.
+    ///
+    /// Origin point is set in projection coordinates (for example, in Mercator meters for Mercator projection).
+    ///
+    /// It is the point where the tile with index `(X: 0, Y: 0)` is located (for every Z index). If the schema
+    /// uses direction of Y indices from top to bottom, the origin point will be at the left top angle of the
+    /// tile. If the direction of Y indices is from bottom to top, the origin point will be at the left bottom
+    /// point of the tile.
+    ///
+    /// ```
+    /// # use galileo::tile_schema::TileSchemaBuilder;
+    /// # use galileo::galileo_types::cartesian::Point2;
+    /// let tile_schema = TileSchemaBuilder::web_mercator(0..23)
+    ///     .origin(Point2::new(-20_037_508.342787, 20_037_508.342787))
+    ///     .build()
+    ///     .expect("tile schema is properly defined");
+    /// ```
+    ///
+    /// Note that origin point doesn't have to be inside the tile bounds. For example, the origin may point to
+    /// the top left angle of the world map, but tiles might only be available for a specific region, and the
+    /// bounds will only contain that region. In this case tiles may have indices starting not from 0.
+    pub fn origin(mut self, origin: Point2) -> Self {
+        self.origin = origin;
+        self
+    }
+
+    /// Sets the rectangle in projected coordinates for which tiles are available.
+    ///
+    /// Tiles that lie outside of the bounds will not be requested from the source.
+    ///
+    /// ```
+    /// # use galileo::tile_schema::TileSchemaBuilder;
+    /// # use galileo::galileo_types::cartesian::Rect;
+    /// let tile_schema = TileSchemaBuilder::web_mercator(0..23)
+    ///     // only show tiles for Angola
+    ///     .tile_bounds(Rect::new(1282761., -1975899., 2674573., -590691.))
+    ///     .build()
+    ///     .expect("tile schema is properly defined");
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// If either width or height of the bounds rectangle is `0`, `NaN` or `Infinity`, building the tile schema
+    /// will return an error [`TileSchemaError::InvalidTileBounds`].
+    pub fn tile_bounds(mut self, bounds: Rect) -> Self {
+        self.tile_bounds = bounds;
+        self
+    }
+
+    /// Sets the rectangle in projected coordinates, which includes the whole globe as defined by the target
+    /// projection.
+    ///
+    /// World bounds are used to calculate x coordinate of tiles when wrapping around 180 parallel, and to
+    /// calculate resolution levels for logarithmic z-levels. If wrapping is not used and z-levels are set
+    /// manually, this parameter is not required for correct calculations of the tile indices.
+    ///
+    /// ```
+    /// # use galileo::tile_schema::TileSchemaBuilder;
+    /// # use galileo::galileo_types::cartesian::Rect;
+    /// let tile_schema = TileSchemaBuilder::web_mercator(0..23)
+    ///     // square WebMercator projetion bounds
+    ///     .world_bounds(Rect::new(-20037508.342787, -20037508.342787, 20037508.342787, 20037508.342787))
+    ///     .build()
+    ///     .expect("tile schema is properly defined");
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// If either width or height of the bounds rectangle is `0`, `NaN` or `Infinity`, building the tile schema
+    /// will return an error `TileSchemaError::InvalidWorldBounds`. This check is skipped if neither wrapping nor
+    /// logarithmic z-levels are used for the schema.
+    pub fn world_bounds(mut self, bounds: Rect) -> Self {
+        self.world_bounds = bounds;
+        self
+    }
+
+    /// Sets direction of Y-indices of the tiles.
+    ///
+    /// The direction is specified relative to the projected coordinates direction. We consider negative Y
+    /// coordinates of the projection to be at the bottom and positive at the top. So if
+    /// `VerticalDirection::TopToBottom` is set, tiles with Y index 0 will be at the very top of the map.
+    pub fn y_direction(mut self, direction: VerticalDirection) -> Self {
+        self.y_direction = direction;
+        self
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use core::f64;
+
     use approx::assert_abs_diff_eq;
 
     use super::*;
@@ -266,7 +410,7 @@ mod tests {
             Point2::new(-20037508.342787, 20037508.342787)
         );
         assert_eq!(
-            schema.bounds,
+            schema.tile_bounds,
             Rect::new(
                 -20037508.342787,
                 -20037508.342787,
@@ -299,7 +443,7 @@ mod tests {
     #[test]
     fn zero_tile_size() {
         let result = TileSchemaBuilder::web_mercator(0..=20)
-            .with_rect_tile_size(0)
+            .rect_tile_size(0)
             .build();
         assert!(
             matches!(
@@ -366,19 +510,19 @@ mod tests {
 
     #[test]
     fn resolution_at_boundary_of_precision() {
-        let result = TileSchemaBuilder::web_mercator(0..=64).build();
+        let result = TileSchemaBuilder::web_mercator(0..=63).build();
         assert!(
             result.is_ok(),
             "Expected z=0..=64 to be valid, got {:?}",
             result
         );
 
-        let result = TileSchemaBuilder::web_mercator(0..=65).build();
+        let result = TileSchemaBuilder::web_mercator(0..=64).build();
 
         assert!(
             matches!(
                 result,
-                Err(TileSchemaError::ResolutionTooSmall { z_level: 65, .. })
+                Err(TileSchemaError::ResolutionTooSmall { z_level: 64, .. })
             ),
             "Expected ResolutionTooSmall error, got {:?}",
             result
@@ -395,7 +539,7 @@ mod tests {
         }
 
         let tile_schema = TileSchemaBuilder::web_mercator(0..0)
-            .with_z_levels(lods)
+            .z_levels(lods)
             .build()
             .unwrap();
 
@@ -411,7 +555,7 @@ mod tests {
     #[test]
     fn custom_z_levels_check_for_min_resolution() {
         let result = TileSchemaBuilder::web_mercator(0..0)
-            .with_z_levels([(0, TOP_RESOLUTION), (1, TOP_RESOLUTION / 2f64.powi(65))])
+            .z_levels([(0, TOP_RESOLUTION), (1, TOP_RESOLUTION / 2f64.powi(65))])
             .build();
         assert!(
             matches!(
@@ -435,9 +579,7 @@ mod tests {
         lods[1].0 = 1;
         lods[2].0 = 2;
 
-        let result = TileSchemaBuilder::web_mercator(0..0)
-            .with_z_levels(lods)
-            .build();
+        let result = TileSchemaBuilder::web_mercator(0..0).z_levels(lods).build();
 
         assert!(
             matches!(
@@ -450,5 +592,79 @@ mod tests {
             ),
             "Unexpected schema build result: {result:?}"
         )
+    }
+
+    #[test]
+    fn invalid_tile_bounds_return_error() {
+        let to_check = [
+            Rect::new(0.0, 0.0, 0.0, 1000.0),
+            Rect::new(0.0, 0.0, 1000.0, 0.0),
+            Rect::new(0.0, 0.0, f64::NAN, 1000.0),
+            Rect::new(0.0, 0.0, 0.0, f64::INFINITY),
+            Rect::new(f64::NEG_INFINITY, 0.0, 1000.0, 1000.0),
+        ];
+
+        for bounds in to_check {
+            let result = TileSchemaBuilder::web_mercator(0..18)
+                .tile_bounds(bounds)
+                .build();
+            assert!(
+                matches!(result, Err(TileSchemaError::InvalidTileBounds(_))),
+                "Error not returned for tile bounds: {bounds:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_world_bounds_return_error() {
+        let to_check = [
+            Rect::new(0.0, 0.0, 0.0, 1000.0),
+            Rect::new(0.0, 0.0, 1000.0, 0.0),
+            Rect::new(0.0, 0.0, f64::NAN, 1000.0),
+            Rect::new(0.0, 0.0, 0.0, f64::INFINITY),
+            Rect::new(f64::NEG_INFINITY, 0.0, 1000.0, 1000.0),
+        ];
+
+        for bounds in to_check {
+            let result = TileSchemaBuilder::web_mercator(0..18)
+                .world_bounds(bounds)
+                .build();
+            assert!(
+                matches!(result, Err(TileSchemaError::InvalidWorldBounds(_))),
+                "Error not returned for world bounds: {bounds:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_world_bounds_skipped_if_not_needed() {
+        let to_check = [
+            Rect::new(0.0, 0.0, 0.0, 1000.0),
+            Rect::new(0.0, 0.0, 1000.0, 0.0),
+            Rect::new(0.0, 0.0, f64::NAN, 1000.0),
+            Rect::new(0.0, 0.0, 0.0, f64::INFINITY),
+            Rect::new(f64::NEG_INFINITY, 0.0, 1000.0, 1000.0),
+        ];
+
+        for bounds in to_check {
+            let result = TileSchemaBuilder::web_mercator(0..18)
+                .world_bounds(bounds)
+                .wrap_x(false)
+                .z_levels([(0, 1000.0), (1, 500.0)])
+                .build();
+            assert!(
+                result.is_ok(),
+                "Error returned for world bounds: {bounds:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn setting_y_direction() {
+        let schema = TileSchemaBuilder::web_mercator(0..18)
+            .y_direction(VerticalDirection::BottomToTop)
+            .build()
+            .unwrap();
+        assert_eq!(schema.y_direction(), VerticalDirection::BottomToTop);
     }
 }

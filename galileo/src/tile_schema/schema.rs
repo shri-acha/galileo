@@ -20,12 +20,34 @@ pub enum VerticalDirection {
 }
 
 /// Tile schema specifies how tile indices are calculated based on the map position and resolution.
+///
+/// # Additional notes
+///
+/// ## Equality
+///
+/// This type implements `PartialEq`, but internals rely heavily on floating numbers so all the
+/// limitation of floating numbers comparison apply to `TileSchema` also. It is usually fine to
+/// compare two instances created by the same code, but be aware of comparing schemas after
+/// seraializing/deserializing.
+///
+/// ## Deserialization
+///
+/// `TileSchema` supports serialization and deserialization as we need to be
+/// able to transfer it between workers/processes. But be aware that the type
+/// internal logic relies on the all parameters to be correctly defined. If
+/// constructed incorrectly, it may return nonsensical results when iterating
+/// tiles, possibly resulting in infinite iteration or panics. So it is
+/// recommended not to use deserialization to construct `TileSchema` from any
+/// external sources or long-term storage. Use [`super::TileSchemaBuilder`]
+/// instead which does all necessary validation before created a schema.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TileSchema {
     /// Position where all tiles have `X == 0, Y == 0` indices.
     pub(super) origin: Point2,
     /// Rectangle that contains all tiles of the tile scheme.
-    pub(super) bounds: Rect,
+    pub(super) tile_bounds: Rect,
+    /// Rectangle that tiles should wrap around.
+    pub(super) world_bounds: Rect,
     /// Sorted set of levels of detail that specify resolutions for each z-level.
     pub(super) lods: Arc<Vec<f64>>,
     /// Width of a single tile in pixels.
@@ -54,6 +76,45 @@ impl TileSchema {
         }
     }
 
+    /// Origin point of the tiles.
+    ///
+    /// Origin point is set in projection coordinates (for example, in Mercator meters for Mercator projection).
+    ///
+    /// It is the point where the tile with index `(X: 0, Y: 0)` is located (for every Z index). If the schema
+    /// uses direction of Y indices from top to bottom, the origin point will be at the left top angle of the
+    /// tile. If the direction of Y indices is from bottom to top, the origin point will be at the left bottom
+    /// point of the tile.
+    pub fn origin(&self) -> Point2 {
+        self.origin
+    }
+
+    /// Rectangle in projected coordinates for which tiles are available.
+    ///
+    /// Tiles that lie outside of the bounds will not be requested from the source.
+    pub fn tile_bounds(&self) -> Rect {
+        self.tile_bounds
+    }
+
+    /// Rectangle in projected coordinates, which includes the whole globe as defined by the target
+    /// projection.
+    ///
+    /// World bounds are used to calculate x coordinate of tiles when wrapping around 180 parallel, and to
+    /// calculate resolution levels for logarithmic z-levels. If wrapping is not used and z-levels are set
+    /// manually, this parameter is not required for correct calculations of the tile indices.
+    pub fn world_bounds(&self) -> Rect {
+        self.world_bounds
+    }
+
+    /// If set to true, tiles will wrap around x axis of the schema bounds.
+    ///
+    /// This means, that if a tile requested for x coordinate that is larger than the maximum x of the
+    /// bounding box or smaller than the minimum x value, the tile index will be calculated by reducing
+    /// or increasing x coordinate by the whole number of bounding box widths. This produces an effect of
+    /// horizontally infinite map, where a user can pan as log as they want to the right or left.
+    pub fn wrap_x(&self) -> bool {
+        self.wrap_x
+    }
+
     /// Width of a single tile.
     pub fn tile_width(&self) -> u32 {
         self.tile_width
@@ -62,6 +123,37 @@ impl TileSchema {
     /// Height of a single tile.
     pub fn tile_height(&self) -> u32 {
         self.tile_height
+    }
+
+    /// Levels of detail of the tile schema.
+    ///
+    /// It returns an iterator of `(z-index, resolution)` items of all LODs defined for the schema.
+    pub fn lods(&self) -> impl Iterator<Item = (u32, f64)> + '_ {
+        let first_item = match self.lods[0] {
+            f64::MAX => None,
+            v => Some((0, v)),
+        };
+
+        std::iter::once(first_item)
+            .chain(self.lods.windows(2).enumerate().map(|(index, slice)| {
+                let prev_resolution = slice[0];
+                let resolution = slice[1];
+                if (prev_resolution - resolution).abs() > f64::EPSILON {
+                    Some((index as u32 + 1, resolution))
+                } else {
+                    None
+                }
+            }))
+            .flatten()
+    }
+
+    /// Direction of Y-indices of the tiles.
+    ///
+    /// The direction is specified relative to the projected coordinates direction. We consider negative Y
+    /// coordinates of the projection to be at the bottom and positive at the top. So if
+    /// `VerticalDirection::TopToBottom` is set, tiles with Y index 0 will be at the very top of the map.
+    pub fn y_direction(&self) -> VerticalDirection {
+        self.y_direction
     }
 
     /// Iterate over tile indices that should be displayed for the given map view.
@@ -73,7 +165,7 @@ impl TileSchema {
 
     /// Returns the bounding rectangle of the given tile index, if the index is valid.
     pub fn tile_bbox(&self, index: WrappingTileIndex) -> Option<Rect> {
-        let x_index = index.display_x;
+        let x_index = index.virtual_x;
         let y_index = index.y;
 
         let resolution = self.lod_resolution(index.z)?;
@@ -146,21 +238,28 @@ impl TileSchema {
         let y_max = (y_max_adj / tile_h) as i32 + y_add_one;
         let y_max = y_max.min(self.max_y_index(lod.resolution));
 
-        let schema_x_min = self.min_x_index(lod.resolution);
-        let schema_x_max = self.max_x_index(lod.resolution);
-        let index_range = schema_x_max - schema_x_min + 1;
+        let world_x_min = self.world_min_x_index(lod.resolution);
+        let world_x_max = self.world_max_x_index(lod.resolution);
+        let index_range = world_x_max - world_x_min + 1;
 
         let actual_x =
-            move |display_x: i32| (display_x - schema_x_min).rem_euclid(index_range) + schema_x_min;
+            move |display_x: i32| (display_x - world_x_min).rem_euclid(index_range) + world_x_min;
 
-        Some((x_min..=x_max).flat_map(move |x| {
-            (y_min..=y_max).map(move |y| WrappingTileIndex {
-                x: actual_x(x),
-                y,
-                z: lod.z_index,
-                display_x: x,
-            })
-        }))
+        let tile_x_min = self.min_x_index(lod.resolution);
+        let tile_x_max = self.max_x_index(lod.resolution);
+
+        Some(
+            (x_min..=x_max)
+                .filter(move |x| actual_x(*x) >= tile_x_min && actual_x(*x) <= tile_x_max)
+                .flat_map(move |x| {
+                    (y_min..=y_max).map(move |y| WrappingTileIndex {
+                        x: actual_x(x),
+                        y,
+                        z: lod.z_index,
+                        virtual_x: x,
+                    })
+                }),
+        )
     }
 
     fn x_adj(&self, x: f64) -> f64 {
@@ -172,10 +271,6 @@ impl TileSchema {
             VerticalDirection::TopToBottom => self.origin.y() - y,
             VerticalDirection::BottomToTop => y - self.origin.y(),
         }
-    }
-
-    fn wrap_x(&self) -> bool {
-        self.wrap_x
     }
 
     fn min_x_displayed_index(&self, resolution: f64) -> i32 {
@@ -195,43 +290,71 @@ impl TileSchema {
     }
 
     fn min_x_index(&self, resolution: f64) -> i32 {
-        ((self.bounds.x_min() - self.origin.x()) / resolution / self.tile_width as f64).floor()
+        ((self.tile_bounds.x_min() - self.origin.x()) / resolution / self.tile_width as f64).floor()
             as i32
     }
 
     fn max_x_index(&self, resolution: f64) -> i32 {
-        let pix_bound = (self.bounds.x_max() - self.origin.x()) / resolution;
+        let pix_bound = (self.tile_bounds.x_max() - self.origin.x()) / resolution;
         let floored = pix_bound.floor();
         if (pix_bound - floored).abs() < 0.1 {
-            (floored / self.tile_width as f64) as i32 - 1
+            (pix_bound / self.tile_width as f64) as i32 - 1
         } else {
-            (floored / self.tile_width as f64) as i32
+            (pix_bound / self.tile_width as f64) as i32
+        }
+    }
+
+    fn world_min_x_index(&self, resolution: f64) -> i32 {
+        if self.wrap_x {
+            ((self.world_bounds.x_min() - self.origin.x()) / resolution / self.tile_width as f64)
+                .floor() as i32
+        } else {
+            self.min_x_index(resolution)
+        }
+    }
+
+    fn world_max_x_index(&self, resolution: f64) -> i32 {
+        if self.wrap_x {
+            let pix_bound = (self.world_bounds.x_max() - self.origin.x()) / resolution;
+            let floored = pix_bound.floor();
+            if (pix_bound - floored).abs() < 0.1 {
+                (pix_bound / self.tile_width as f64) as i32 - 1
+            } else {
+                (pix_bound / self.tile_width as f64) as i32
+            }
+        } else {
+            self.max_x_index(resolution)
         }
     }
 
     fn min_y_index(&self, resolution: f64) -> i32 {
         match self.y_direction {
-            VerticalDirection::TopToBottom => {
-                ((self.bounds.y_min() + self.origin.y()) / resolution / self.tile_height as f64)
-                    .floor() as i32
-            }
-            VerticalDirection::BottomToTop => {
-                ((self.bounds.y_min() - self.origin.y()) / resolution / self.tile_height as f64)
-                    .floor() as i32
-            }
+            VerticalDirection::TopToBottom => ((self.origin.y() - self.tile_bounds.y_max())
+                / resolution
+                / self.tile_height as f64)
+                .floor() as i32,
+            VerticalDirection::BottomToTop => ((self.tile_bounds.y_min() - self.origin.y())
+                / resolution
+                / self.tile_height as f64)
+                .floor() as i32,
         }
     }
 
     fn max_y_index(&self, resolution: f64) -> i32 {
         let pix_bound = match self.y_direction {
-            VerticalDirection::TopToBottom => (self.bounds.y_max() + self.origin.y()) / resolution,
-            VerticalDirection::BottomToTop => (self.bounds.y_max() - self.origin.y()) / resolution,
+            VerticalDirection::TopToBottom => {
+                (self.origin.y() - self.tile_bounds.y_min()) / resolution
+            }
+            VerticalDirection::BottomToTop => {
+                (self.tile_bounds.y_max() - self.origin.y()) / resolution
+            }
         };
+
         let floored = pix_bound.floor();
         if (pix_bound - floored).abs() < 0.1 {
-            (floored / self.tile_height as f64) as i32 - 1
+            (pix_bound / self.tile_width as f64) as i32 - 1
         } else {
-            (floored / self.tile_height as f64) as i32
+            (pix_bound / self.tile_width as f64) as i32
         }
     }
 }
@@ -241,7 +364,7 @@ mod tests {
     use galileo_types::cartesian::Size;
 
     use super::*;
-    use crate::tile_schema::WrappingTileIndex;
+    use crate::tile_schema::{TileSchemaBuilder, WrappingTileIndex};
 
     fn simple_schema() -> TileSchema {
         schema_with_lods(vec![8.0, 4.0, 2.0])
@@ -250,7 +373,8 @@ mod tests {
     fn schema_with_lods(lods: Vec<f64>) -> TileSchema {
         TileSchema {
             origin: Point2::default(),
-            bounds: Rect::new(0.0, 0.0, 2048.0, 2048.0),
+            tile_bounds: Rect::new(0.0, 0.0, 2048.0, 2048.0),
+            world_bounds: Rect::new(0.0, 0.0, 2048.0, 2048.0),
             lods: Arc::new(lods),
             tile_width: 256,
             tile_height: 256,
@@ -387,14 +511,160 @@ mod tests {
         let view = get_view(8.0, bbox);
         assert_eq!(schema.iter_tiles(&view).unwrap().count(), 1);
         assert_eq!(
-            schema.iter_tiles(&view).unwrap().next().unwrap().display_x,
+            schema.iter_tiles(&view).unwrap().next().unwrap().virtual_x,
             1
         );
         let view = get_view(2.0, bbox);
         assert_eq!(schema.iter_tiles(&view).unwrap().count(), 4);
         assert_eq!(
-            schema.iter_tiles(&view).unwrap().next().unwrap().display_x,
+            schema.iter_tiles(&view).unwrap().next().unwrap().virtual_x,
             4
         );
+    }
+
+    #[test]
+    fn iter_tiles_origin_out_of_bounds() {
+        let schema = TileSchema {
+            origin: Point2::new(0.0, 0.0),
+            tile_bounds: Rect::new(1000.0, 1000.0, 2000.0, 2000.0),
+            world_bounds: Rect::new(1000.0, 1000.0, 2000.0, 2000.0),
+            lods: Arc::new(vec![30.0, 10.0, 1.0]),
+            tile_width: 10,
+            tile_height: 10,
+            y_direction: VerticalDirection::BottomToTop,
+            wrap_x: false,
+        };
+
+        let tiles: Vec<_> = schema
+            .iter_tiles_over_bbox(10.0, Rect::new(0.0, 0.0, 500.0, 500.0))
+            .unwrap()
+            .collect();
+        assert!(
+            tiles.is_empty(),
+            "Expected empty tiles iter, but got: {tiles:?}"
+        );
+
+        let tiles: Vec<_> = schema
+            .iter_tiles_over_bbox(10.0, Rect::new(900.0, 900.0, 1100.0, 1100.0))
+            .unwrap()
+            .collect();
+
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(tiles[0], WrappingTileIndex::new(10, 10, 1));
+
+        let tiles: Vec<_> = schema
+            .iter_tiles_over_bbox(30.0, Rect::new(900.0, 900.0, 950.0, 950.0))
+            .unwrap()
+            .collect();
+
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(tiles[0], WrappingTileIndex::new(3, 3, 0));
+    }
+
+    #[test]
+    fn iter_tiles_origin_out_of_bounds_top_to_bottom() {
+        let schema = TileSchema {
+            origin: Point2::new(0.0, 3000.0),
+            tile_bounds: Rect::new(1000.0, 1000.0, 2000.0, 2000.0),
+            world_bounds: Rect::new(1000.0, 1000.0, 2000.0, 2000.0),
+            lods: Arc::new(vec![30.0, 10.0, 1.0]),
+            tile_width: 10,
+            tile_height: 10,
+            y_direction: VerticalDirection::TopToBottom,
+            wrap_x: false,
+        };
+
+        let tiles: Vec<_> = schema
+            .iter_tiles_over_bbox(10.0, Rect::new(0.0, 0.0, 500.0, 500.0))
+            .unwrap()
+            .collect();
+        assert!(
+            tiles.is_empty(),
+            "Expected empty tiles iter, but got: {tiles:?}"
+        );
+
+        let tiles: Vec<_> = schema
+            .iter_tiles_over_bbox(10.0, Rect::new(900.0, 900.0, 1099.0, 1099.0))
+            .unwrap()
+            .collect();
+
+        println!("{tiles:?}");
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(tiles[0], WrappingTileIndex::new(10, 19, 1));
+
+        let tiles: Vec<_> = schema
+            .iter_tiles_over_bbox(30.0, Rect::new(900.0, 900.0, 950.0, 950.0))
+            .unwrap()
+            .collect();
+
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(tiles[0], WrappingTileIndex::new(3, 6, 0));
+    }
+
+    #[test]
+    fn tile_bbox_origin_out_of_bounds() {
+        let schema = TileSchema {
+            origin: Point2::new(0.0, 0.0),
+            tile_bounds: Rect::new(1000.0, 1000.0, 2000.0, 2000.0),
+            world_bounds: Rect::new(1000.0, 1000.0, 2000.0, 2000.0),
+            lods: Arc::new(vec![300.0, 100.0, 10.0, 1.0]),
+            tile_width: 10,
+            tile_height: 10,
+            y_direction: VerticalDirection::BottomToTop,
+            wrap_x: false,
+        };
+
+        let bbox = schema.tile_bbox(WrappingTileIndex::new(10, 10, 2)).unwrap();
+        assert_eq!(bbox, Rect::new(1000.0, 1000.0, 1100.0, 1100.0));
+    }
+
+    #[test]
+    fn wrapping_is_done_around_world_bounds() {
+        let schema = TileSchema {
+            origin: Point2::default(),
+            tile_bounds: Rect::new(0.0, 0.0, 1000.0, 1000.0),
+            world_bounds: Rect::new(0.0, 0.0, 2000.0, 2000.0),
+            lods: Arc::new(vec![10.0, 5.0, 1.0]),
+            tile_width: 100,
+            tile_height: 100,
+            y_direction: VerticalDirection::BottomToTop,
+            wrap_x: true,
+        };
+
+        let bbox = Rect::new(0.0, 0.0, 3000.0, 1000.0);
+        let tiles: Vec<_> = schema.iter_tiles_over_bbox(10.0, bbox).unwrap().collect();
+
+        assert_eq!(tiles.len(), 2, "Unexpected tiles set: {tiles:?}");
+        assert_eq!(
+            tiles[0],
+            WrappingTileIndex {
+                z: 0,
+                x: 0,
+                y: 0,
+                virtual_x: 0
+            }
+        );
+        assert_eq!(
+            tiles[1],
+            WrappingTileIndex {
+                z: 0,
+                x: 0,
+                y: 0,
+                virtual_x: 2
+            }
+        );
+    }
+
+    #[test]
+    fn iterate_lods() {
+        let schema = TileSchemaBuilder::web_mercator([1, 2, 4, 7])
+            .build()
+            .unwrap();
+        let lods: Vec<_> = schema.lods().collect();
+        assert_eq!(lods.len(), 4);
+        assert_eq!(lods[0].0, 1);
+        assert_eq!(lods[1].0, 2);
+        assert_eq!(lods[2].0, 4);
+        assert_eq!(lods[3].0, 7);
     }
 }
