@@ -1,9 +1,10 @@
 //! Module that provides support for step and interpolate expressions for Color and Number
-//! typesexpresion
+//! type expression
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::vec::IntoIter;
 
+use eqsolver::single_variable::FDNewton;
 use serde::{Deserialize, Serialize};
 
 use crate::Color;
@@ -16,6 +17,9 @@ pub enum InterpolationArgs<T> {
     /// Exponential variant of interpolation arguments
     #[serde(rename = "exponential")]
     Exponential(ExponentialInterpolationArgs<T>),
+    /// Cubic variant of interpolation arguments
+    #[serde(rename = "cubic")]
+    Cubic(CubicInterpolationArgs<T>),
 }
 
 impl<T: Copy> InterpolationArgs<T> {
@@ -23,6 +27,7 @@ impl<T: Copy> InterpolationArgs<T> {
         match self {
             Self::Linear(args) => &args.step_values,
             Self::Exponential(args) => &args.step_values,
+            Self::Cubic(args) => &args.step_values,
         }
     }
 }
@@ -66,6 +71,13 @@ impl<T: Copy> ExponentialInterpolationArgs<T> {
             step_values: step_values.into_iter().collect::<BTreeSet<_>>(),
         })
     }
+}
+
+/// Arguments for Cubic Interpolation Function
+#[derive(Clone, Debug, Serialize, PartialEq, Deserialize)]
+pub struct CubicInterpolationArgs<T> {
+    control_points: [f64; 4],
+    step_values: BTreeSet<StepValue<T>>,
 }
 
 /// Wrapper type for each step value
@@ -287,6 +299,14 @@ impl<T: InterpolatableValue> InterpolateExpression<T> {
                     current_resolution,
                     args.base,
                 ),
+                InterpolationArgs::Cubic(args) => cubic_interpolation(
+                    rv_range.min_resolution,
+                    rv_range.max_resolution,
+                    start,
+                    end,
+                    current_resolution,
+                    args.control_points,
+                ),
             };
 
             result.set_component(&component, component_value);
@@ -294,6 +314,36 @@ impl<T: InterpolatableValue> InterpolateExpression<T> {
 
         result
     }
+}
+
+fn inv_find_t(x0: f64, cpts: [f64; 4]) -> f64 {
+    let x1 = cpts[0];
+    let x2 = cpts[2];
+    let f = move |t: f64| {
+        3. * (1. - t).powi(2) * t * x1 + 3. * (1. - t) * t.powi(2) * x2 + t.powi(3) - x0
+    };
+    FDNewton::new(f)
+        .solve(0.0)
+        .map(|e| e.clamp(0.0, 1.0))
+        .expect("Failure in finding ideal root.")
+}
+
+fn cubic_interpolation(
+    x_start: f64,
+    x_end: f64,
+    y_start: f64,
+    y_end: f64,
+    x0: f64,
+    control_points: [f64; 4],
+) -> f64 {
+    let x_normalized =
+        ((x0 - x_start) / (x_end - x_start).clamp(f64::EPSILON, f64::MAX)).clamp(0., 1.);
+    let t = inv_find_t(x_normalized, control_points);
+    let y1 = control_points[1];
+    let y2 = control_points[3];
+    let y_normalized = 3. * (1. - t).powi(2) * t * y1 + 3. * (1. - t) * t.powi(2) * y2 + t.powi(3);
+
+    y_start + y_normalized * (y_end - y_start)
 }
 
 fn exponential_interpolation(
@@ -315,7 +365,7 @@ fn exponential_interpolation(
 
     let offset = y_end - y_start;
 
-    (y_start + t * (offset)).clamp(0.0, 255.0)
+    (y_start + t * (offset)).clamp(f64::EPSILON, f64::MAX)
 }
 
 fn linear_interpolation(x_start: f64, x_end: f64, y_start: f64, y_end: f64, x0: f64) -> f64 {
