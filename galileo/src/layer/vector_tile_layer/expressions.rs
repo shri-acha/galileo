@@ -4,7 +4,6 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::vec::IntoIter;
 
-use eqsolver::single_variable::FDNewton;
 use serde::{Deserialize, Serialize};
 
 use crate::Color;
@@ -316,16 +315,32 @@ impl<T: InterpolatableValue> InterpolateExpression<T> {
     }
 }
 
-fn inv_find_t(x0: f64, cpts: [f64; 4]) -> f64 {
+fn bisection_solve(f: impl Fn(f64) -> f64, mut low: f64, mut high: f64, eps: f64) -> f64 {
+    let mut t = low;
+    const MAX_ITERS: u32 = 25;
+    for _ in 0..MAX_ITERS {
+        t = low + (high - low) / 2.0;
+        let val = f(t);
+        if val.abs() < eps {
+            return t;
+        }
+        if val > 0.0 {
+            high = t;
+        } else {
+            low = t;
+        }
+    }
+    t
+}
+
+fn inv_bezier(x0: f64, cpts: [f64; 4]) -> f64 {
     let x1 = cpts[0];
     let x2 = cpts[2];
+    // Bx(t)
     let f = move |t: f64| {
         3. * (1. - t).powi(2) * t * x1 + 3. * (1. - t) * t.powi(2) * x2 + t.powi(3) - x0
     };
-    FDNewton::new(f)
-        .solve(0.0)
-        .map(|e| e.clamp(0.0, 1.0))
-        .expect("Failure in finding ideal root.")
+    bisection_solve(f, 0., 1., 0.001)
 }
 
 fn cubic_interpolation(
@@ -338,11 +353,11 @@ fn cubic_interpolation(
 ) -> f64 {
     let x_normalized =
         ((x0 - x_start) / (x_end - x_start).clamp(f64::EPSILON, f64::MAX)).clamp(0., 1.);
-    let t = inv_find_t(x_normalized, control_points);
+    let t = inv_bezier(x_normalized, control_points);
     let y1 = control_points[1];
     let y2 = control_points[3];
+    // By(t)
     let y_normalized = 3. * (1. - t).powi(2) * t * y1 + 3. * (1. - t) * t.powi(2) * y2 + t.powi(3);
-
     y_start + y_normalized * (y_end - y_start)
 }
 
@@ -365,7 +380,7 @@ fn exponential_interpolation(
 
     let offset = y_end - y_start;
 
-    (y_start + t * (offset)).clamp(f64::EPSILON, f64::MAX)
+    y_start + t * (offset)
 }
 
 fn linear_interpolation(x_start: f64, x_end: f64, y_start: f64, y_end: f64, x0: f64) -> f64 {
