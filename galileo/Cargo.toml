@@ -30,7 +30,6 @@ base64 = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
 bytes = { workspace = true }
 cfg-if = { workspace = true }
-cubic-bezier = "1.0.0"
 futures-intrusive = { workspace = true }
 galileo-mvt = { workspace = true }
 galileo-types = { workspace = true }
