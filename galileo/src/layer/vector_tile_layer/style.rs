@@ -9,6 +9,7 @@ use crate::render::text::{
     FontStyle, FontWeight, HorizontalAlignment, TextStyle, VerticalAlignment,
 };
 use crate::render::{LineCap, LinePaint, PolygonPaint};
+use crate::tile_schema::TileSchema;
 use crate::Color;
 
 /// Style of a vector tile layer. This specifies how each feature in a tile should be rendered.
@@ -282,11 +283,11 @@ impl VectorTilePointSymbol {
         &self,
         current_resolution: f64,
         _feature: &MvtFeature,
-        _tile_schema: &TileSchema
+        tile_schema: &TileSchema,
     ) -> PointPaint<'_> {
         PointPaint::circle(
-            self.color.get_value(current_resolution),
-            self.size.get_value(current_resolution) as f32,
+            self.color.get_value(current_resolution, tile_schema),
+            self.size.get_value(current_resolution, tile_schema) as f32,
         )
     }
 }
@@ -301,10 +302,15 @@ pub struct VectorTileLineSymbol {
 }
 
 impl VectorTileLineSymbol {
-    pub(crate) fn to_paint(&self, current_resolution: f64, _feature: &MvtFeature) -> LinePaint {
+    pub(crate) fn to_paint(
+        &self,
+        current_resolution: f64,
+        _feature: &MvtFeature,
+        tile_schema: &TileSchema,
+    ) -> LinePaint {
         LinePaint {
-            color: self.stroke_color.get_value(current_resolution),
-            width: self.width.get_value(current_resolution),
+            color: self.stroke_color.get_value(current_resolution, tile_schema),
+            width: self.width.get_value(current_resolution, tile_schema),
             offset: 0.0,
             line_cap: LineCap::Butt,
         }
@@ -319,9 +325,14 @@ pub struct VectorTilePolygonSymbol {
 }
 
 impl VectorTilePolygonSymbol {
-    pub(crate) fn to_paint(&self, current_resolution: f64, _feature: &MvtFeature) -> PolygonPaint {
+    pub(crate) fn to_paint(
+        &self,
+        current_resolution: f64,
+        _feature: &MvtFeature,
+        tile_schema: &TileSchema,
+    ) -> PolygonPaint {
         PolygonPaint {
-            color: self.fill_color.get_value(current_resolution),
+            color: self.fill_color.get_value(current_resolution, tile_schema),
         }
     }
 }
@@ -369,17 +380,21 @@ pub struct VtTextStyle {
 impl VtTextStyle {
     /// This method returns the value of the struct `TextStyle` on the basis of the
     /// current resolution level.
-    pub fn get_value(self, current_resolution: f64) -> TextStyle {
+    pub fn get_value(self, current_resolution: f64, tile_schema: &TileSchema) -> TextStyle {
         TextStyle {
             font_family: self.font_family,
-            font_size: self.font_size.get_value(current_resolution),
-            font_color: self.font_color.get_value(current_resolution),
+            font_size: self.font_size.get_value(current_resolution, tile_schema),
+            font_color: self.font_color.get_value(current_resolution, tile_schema),
             horizontal_alignment: self.horizontal_alignment,
             vertical_alignment: self.vertical_alignment,
             weight: self.weight,
             style: self.style,
-            outline_width: self.outline_width.get_value(current_resolution),
-            outline_color: self.outline_color.get_value(current_resolution),
+            outline_width: self
+                .outline_width
+                .get_value(current_resolution, tile_schema),
+            outline_color: self
+                .outline_color
+                .get_value(current_resolution, tile_schema),
         }
     }
 }

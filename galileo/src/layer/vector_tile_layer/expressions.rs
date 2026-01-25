@@ -6,6 +6,7 @@ use std::vec::IntoIter;
 
 use serde::{Deserialize, Serialize};
 
+use crate::tile_schema::TileSchema;
 use crate::Color;
 /// Wrapper over arguments for Interpolation Functions
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -31,18 +32,18 @@ impl<T: Copy> InterpolationArgs<T> {
     }
 }
 
-/// This enum is used to decide if an interpolation is done on the basis of 
+/// This enum is used to decide if an operation is done on the basis of
 /// z-levels or resolution.
-#[derive(Debug,Copy,Deserialize,Serialize,PartialEq,Clone,Default)]
-pub enum InterpolationType{
-    #[serde(rename="z_level")]
-    /// This variant makes it so that the expression is interpolated 
+#[derive(Debug, Copy, Deserialize, Serialize, PartialEq, Clone, Default)]
+pub enum OperationBase {
+    #[serde(rename = "z_level")]
+    /// This variant makes it so that the expression is operated
     /// on the basis of equivalent z-level of the given resolution.
     Zlevel,
     #[default]
-    #[serde(rename="resolution")]
-    /// This variant makes it so that the expression is interpolated 
-    /// on the basis of the resolution. 
+    #[serde(rename = "resolution")]
+    /// This variant makes it so that the expression is operated
+    /// on the basis of the resolution.
     /// (This is the default choice for interpolation)
     Resolution,
 }
@@ -51,8 +52,6 @@ pub enum InterpolationType{
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LinearInterpolationArgs<T> {
     step_values: BTreeSet<StepValue<T>>,
-    #[serde(default)]
-    interpolate_with: InterpolationType,
 }
 
 impl<T: Copy> LinearInterpolationArgs<T> {
@@ -63,7 +62,6 @@ impl<T: Copy> LinearInterpolationArgs<T> {
         }
         Ok(Self {
             step_values: step_values.collect::<BTreeSet<_>>(),
-            interpolate_with: Default::default(),
         })
     }
 }
@@ -73,8 +71,6 @@ impl<T: Copy> LinearInterpolationArgs<T> {
 pub struct ExponentialInterpolationArgs<T> {
     base: i32,
     step_values: BTreeSet<StepValue<T>>,
-    #[serde(default)]
-    interpolate_with: InterpolationType,
 }
 
 impl<T: Copy> ExponentialInterpolationArgs<T> {
@@ -90,7 +86,6 @@ impl<T: Copy> ExponentialInterpolationArgs<T> {
         Ok(Self {
             base,
             step_values: step_values.into_iter().collect::<BTreeSet<_>>(),
-            interpolate_with: Default::default(),
         })
     }
 }
@@ -100,8 +95,6 @@ impl<T: Copy> ExponentialInterpolationArgs<T> {
 pub struct CubicInterpolationArgs<T> {
     control_points: [f64; 4],
     step_values: BTreeSet<StepValue<T>>,
-    #[serde(default)]
-    interpolate_with: InterpolationType,
 }
 
 impl<T: Copy> CubicInterpolationArgs<T> {
@@ -116,7 +109,6 @@ impl<T: Copy> CubicInterpolationArgs<T> {
         Ok(Self {
             control_points,
             step_values: step_values.into_iter().collect::<BTreeSet<_>>(),
-            interpolate_with: Default::default(),
         })
     }
 }
@@ -156,6 +148,8 @@ impl<T> Ord for StepValue<T> {
 pub struct InterpolateExpression<T> {
     #[serde(rename = "interpolate")]
     interpolation_args: InterpolationArgs<T>,
+    #[serde(default)]
+    operation_base: OperationBase,
 }
 /// Type used to define Step Function
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -167,8 +161,7 @@ pub struct StepExpression<T> {
     #[serde(rename = "default_value")]
     default_value: T,
     step_values: BTreeSet<StepValue<T>>,
-    #[serde(default)]
-    interpolate_with: InterpolationType, 
+    operation_base: OperationBase,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -200,7 +193,7 @@ impl<T> From<T> for StyleValue<T> {
 
 impl StyleValue<Color> {
     /// Evaluates value of Color depending upon the type of expression used.
-    pub fn get_value(&self, current_resolution: f64) -> Color {
+    pub fn get_value(&self, current_resolution: f64, _tile_schema: &TileSchema) -> Color {
         match self {
             StyleValue::Simple(t) => *t,
             StyleValue::Interpolate(expression) => expression.evaluate(current_resolution),
@@ -210,7 +203,7 @@ impl StyleValue<Color> {
 }
 impl StyleValue<f64> {
     /// Evaluates value of Number depending upon the type of expression used.
-    pub fn get_value(&self, current_resolution: f64) -> f64 {
+    pub fn get_value(&self, current_resolution: f64, _tile_schema: &TileSchema) -> f64 {
         match self {
             StyleValue::Simple(t) => *t,
             StyleValue::Interpolate(expression) => expression.evaluate(current_resolution),
@@ -221,7 +214,7 @@ impl StyleValue<f64> {
 
 impl StyleValue<f32> {
     /// Evaluates value of Number depending upon the type of expression used.
-    pub fn get_value(&self, current_resolution: f64) -> f32 {
+    pub fn get_value(&self, current_resolution: f64, _tile_schema: &TileSchema) -> f32 {
         match self {
             StyleValue::Simple(t) => *t,
             StyleValue::Interpolate(expression) => expression.evaluate(current_resolution),
@@ -233,7 +226,10 @@ impl StyleValue<f32> {
 impl<T> InterpolateExpression<T> {
     /// Returns a new instance of `InterpolateExpression`
     pub fn new(interpolation_args: InterpolationArgs<T>) -> Self {
-        Self { interpolation_args }
+        Self {
+            interpolation_args,
+            operation_base: Default::default(),
+        }
     }
     fn get_boundary_value(&self, current_resolution: f64) -> T
     where
@@ -339,10 +335,26 @@ impl InterpolatableValue for Color {
 #[allow(private_bounds)]
 impl<T: InterpolatableValue> InterpolateExpression<T> {
     fn evaluate(&self, current_resolution: f64) -> T {
-        if let Some(resolution_value_range) = get_resolution_value_range(self, current_resolution) {
-            self.interpolate_value(current_resolution, &resolution_value_range)
-        } else {
-            self.get_boundary_value(current_resolution)
+        match self.operation_base {
+            OperationBase::Resolution => {
+                if let Some(resolution_value_range) =
+                    get_resolution_value_range(self, current_resolution)
+                {
+                    self.interpolate_value(current_resolution, &resolution_value_range)
+                } else {
+                    self.get_boundary_value(current_resolution)
+                }
+            }
+            OperationBase::Zlevel => {
+                // TODO
+                if let Some(resolution_value_range) =
+                    get_resolution_value_range(self, current_resolution)
+                {
+                    self.interpolate_value(current_resolution, &resolution_value_range)
+                } else {
+                    self.get_boundary_value(current_resolution)
+                }
+            }
         }
     }
 
@@ -499,7 +511,7 @@ impl<T: Copy> StepExpression<T> {
         Ok(Self {
             default_value,
             step_values: step_values.collect::<BTreeSet<_>>(),
-            interpolate_with:Default::default(),
+            operation_base: Default::default(),
         })
     }
 }
@@ -507,31 +519,53 @@ impl<T: Copy> StepExpression<T> {
     /// Evaluates generic expression by giving stepwise value
     /// of color on basis of zoom
     fn evaluate(&self, current_resolution: f64) -> T {
-        if let Some(w) = self
-            .step_values
-            .iter()
-            .collect::<Vec<_>>()
-            .windows(2)
-            .find(|w| {
-                current_resolution >= w[0].resolution && current_resolution <= w[1].resolution
-            })
-        {
-            w[0].step_value
-        } else if current_resolution
-            < self
-                .step_values
-                .iter()
-                .nth(0)
-                .expect("value at 0th position")
-                .resolution
-        {
-            self.default_value
+        match self.operation_base {
+            OperationBase::Resolution => {
+                if let Some(w) = self
+                    .step_values
+                    .iter()
+                    .collect::<Vec<_>>()
+                    .windows(2)
+                    .find(|w| {
+                        current_resolution >= w[0].resolution
+                            && current_resolution <= w[1].resolution
+                    })
+                {
+                    w[0].step_value
+                } else {
+                    self.get_default_value(current_resolution)
+                }
+            }
+            OperationBase::Zlevel => {
+                // TODO
+                if let Some(w) = self
+                    .step_values
+                    .iter()
+                    .collect::<Vec<_>>()
+                    .windows(2)
+                    .find(|w| {
+                        current_resolution >= w[0].resolution
+                            && current_resolution <= w[1].resolution
+                    })
+                {
+                    w[0].step_value
+                } else {
+                    self.get_default_value(current_resolution)
+                }
+            }
+        }
+    }
+
+    fn get_default_value(&self, current_resolution: f64) -> T
+    where
+        T: Copy,
+    {
+        let step_values = self.step_values.iter().collect::<Vec<_>>();
+
+        if current_resolution < step_values[0].resolution {
+            self.default_value 
         } else {
-            self.step_values
-                .iter()
-                .nth(self.step_values.len() - 1)
-                .expect("value at end position")
-                .step_value
+            step_values[step_values.len() - 1].step_value
         }
     }
 }
@@ -557,9 +591,7 @@ mod number_tests {
         )
         .expect("failed to create interpolation arguments");
 
-        let expr = InterpolateExpression {
-            interpolation_args: InterpolationArgs::Linear(args),
-        };
+        let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
 
         assert!(get_resolution_value_range(&expr, 75.0).is_none());
         assert!(get_resolution_value_range(&expr, 20.0).is_none());
@@ -1054,9 +1086,7 @@ mod color_tests {
         )
         .expect("failed to create interpolation arguments");
 
-        let expr = InterpolateExpression {
-            interpolation_args: InterpolationArgs::Linear(args),
-        };
+        let expr = InterpolateExpression::new(InterpolationArgs::Linear(args));
 
         assert!(get_resolution_value_range(&expr, 75.0).is_none());
         assert!(get_resolution_value_range(&expr, 20.0).is_none());
