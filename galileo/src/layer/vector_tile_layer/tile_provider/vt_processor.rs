@@ -138,12 +138,13 @@ impl VtProcessor {
             .or_else(|| {
                 rule.symbol
                     .label()
-                    .and_then(|symbol| Self::format_label(symbol, feature))
+                    .and_then(|symbol| Self::format_label(symbol, resolution, feature))
             })
     }
 
     fn format_label<'a>(
         label_symbol: &VectorTileLabelSymbol,
+        resolution: f64,
         feature: &MvtFeature,
     ) -> Option<PointPaint<'a>> {
         let re = Regex::new("\\{(?<name>.+)}").ok()?;
@@ -160,7 +161,7 @@ impl VtProcessor {
         }
         Some(PointPaint::label_owned(
             text,
-            label_symbol.text_style.clone(),
+            label_symbol.text_style.clone().get_value(resolution),
         ))
     }
 
