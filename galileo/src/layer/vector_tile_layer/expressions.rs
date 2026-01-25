@@ -30,10 +30,29 @@ impl<T: Copy> InterpolationArgs<T> {
         }
     }
 }
+
+/// This enum is used to decide if an interpolation is done on the basis of 
+/// z-levels or resolution.
+#[derive(Debug,Copy,Deserialize,Serialize,PartialEq,Clone,Default)]
+pub enum InterpolationType{
+    #[serde(rename="z_level")]
+    /// This variant makes it so that the expression is interpolated 
+    /// on the basis of equivalent z-level of the given resolution.
+    Zlevel,
+    #[default]
+    #[serde(rename="resolution")]
+    /// This variant makes it so that the expression is interpolated 
+    /// on the basis of the resolution. 
+    /// (This is the default choice for interpolation)
+    Resolution,
+}
+
 /// Arguments for Linear Interpolation Function
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LinearInterpolationArgs<T> {
     step_values: BTreeSet<StepValue<T>>,
+    #[serde(default)]
+    interpolate_with: InterpolationType,
 }
 
 impl<T: Copy> LinearInterpolationArgs<T> {
@@ -44,6 +63,7 @@ impl<T: Copy> LinearInterpolationArgs<T> {
         }
         Ok(Self {
             step_values: step_values.collect::<BTreeSet<_>>(),
+            interpolate_with: Default::default(),
         })
     }
 }
@@ -53,6 +73,8 @@ impl<T: Copy> LinearInterpolationArgs<T> {
 pub struct ExponentialInterpolationArgs<T> {
     base: i32,
     step_values: BTreeSet<StepValue<T>>,
+    #[serde(default)]
+    interpolate_with: InterpolationType,
 }
 
 impl<T: Copy> ExponentialInterpolationArgs<T> {
@@ -68,6 +90,7 @@ impl<T: Copy> ExponentialInterpolationArgs<T> {
         Ok(Self {
             base,
             step_values: step_values.into_iter().collect::<BTreeSet<_>>(),
+            interpolate_with: Default::default(),
         })
     }
 }
@@ -77,6 +100,8 @@ impl<T: Copy> ExponentialInterpolationArgs<T> {
 pub struct CubicInterpolationArgs<T> {
     control_points: [f64; 4],
     step_values: BTreeSet<StepValue<T>>,
+    #[serde(default)]
+    interpolate_with: InterpolationType,
 }
 
 impl<T: Copy> CubicInterpolationArgs<T> {
@@ -91,6 +116,7 @@ impl<T: Copy> CubicInterpolationArgs<T> {
         Ok(Self {
             control_points,
             step_values: step_values.into_iter().collect::<BTreeSet<_>>(),
+            interpolate_with: Default::default(),
         })
     }
 }
@@ -141,6 +167,8 @@ pub struct StepExpression<T> {
     #[serde(rename = "default_value")]
     default_value: T,
     step_values: BTreeSet<StepValue<T>>,
+    #[serde(default)]
+    interpolate_with: InterpolationType, 
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -444,6 +472,7 @@ impl<T: Copy> StepExpression<T> {
         Ok(Self {
             default_value,
             step_values: step_values.collect::<BTreeSet<_>>(),
+            interpolate_with:Default::default(),
         })
     }
 }

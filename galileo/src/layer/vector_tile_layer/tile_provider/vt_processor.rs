@@ -65,7 +65,7 @@ impl VtProcessor {
 
                 match &feature.geometry {
                     MvtGeometry::Point(points) => {
-                        let Some(paint) = Self::get_point_symbol(rule, lod_resolution, feature)
+                        let Some(paint) = Self::get_point_symbol(rule, lod_resolution, feature,tile_schema)
                         else {
                             continue;
                         };
@@ -130,10 +130,11 @@ impl VtProcessor {
         rule: &'a StyleRule,
         resolution: f64,
         feature: &MvtFeature,
+        _tile_schema: &TileSchema,
     ) -> Option<PointPaint<'a>> {
         rule.symbol
             .point()
-            .map(|symbol| symbol.to_paint(resolution, feature))
+            .map(|symbol| symbol.to_paint(resolution, feature,tile_schema))
             .or_else(|| {
                 rule.symbol
                     .label()

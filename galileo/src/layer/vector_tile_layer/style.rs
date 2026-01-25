@@ -280,6 +280,7 @@ impl VectorTilePointSymbol {
         &self,
         current_resolution: f64,
         _feature: &MvtFeature,
+        _tile_schema: &TileSchema
     ) -> PointPaint<'_> {
         PointPaint::circle(
             self.color.get_value(current_resolution),
