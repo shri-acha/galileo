@@ -76,6 +76,17 @@ impl TileSchema {
         }
     }
 
+    pub(crate) fn resolution_z(&self, resolution: f64) -> Option<u32> {
+        if !resolution.is_finite() || self.lods.is_empty() {
+            return None;
+        }
+        let adj_resolution = resolution * (1.0 + RESOLUTION_TOLERANCE);
+        Some(
+            self.lods
+                .partition_point(|&resolution| resolution >= adj_resolution) as u32,
+        )
+    }
+
     /// Origin point of the tiles.
     ///
     /// Origin point is set in projection coordinates (for example, in Mercator meters for Mercator projection).

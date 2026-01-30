@@ -284,11 +284,11 @@ impl VectorTilePointSymbol {
         current_resolution: f64,
         _feature: &MvtFeature,
         tile_schema: &TileSchema,
-    ) -> PointPaint<'_> {
-        PointPaint::circle(
-            self.color.get_value(current_resolution, tile_schema),
-            self.size.get_value(current_resolution, tile_schema) as f32,
-        )
+    ) -> Option<PointPaint<'_>> {
+        Some(PointPaint::circle(
+            self.color.get_value(current_resolution, tile_schema)?,
+            self.size.get_value(current_resolution, tile_schema)? as f32,
+        ))
     }
 }
 
@@ -307,13 +307,15 @@ impl VectorTileLineSymbol {
         current_resolution: f64,
         _feature: &MvtFeature,
         tile_schema: &TileSchema,
-    ) -> LinePaint {
-        LinePaint {
-            color: self.stroke_color.get_value(current_resolution, tile_schema),
-            width: self.width.get_value(current_resolution, tile_schema),
+    ) -> Option<LinePaint> {
+        Some(LinePaint {
+            color: self
+                .stroke_color
+                .get_value(current_resolution, tile_schema)?,
+            width: self.width.get_value(current_resolution, tile_schema)?,
             offset: 0.0,
             line_cap: LineCap::Butt,
-        }
+        })
     }
 }
 
@@ -330,10 +332,10 @@ impl VectorTilePolygonSymbol {
         current_resolution: f64,
         _feature: &MvtFeature,
         tile_schema: &TileSchema,
-    ) -> PolygonPaint {
-        PolygonPaint {
-            color: self.fill_color.get_value(current_resolution, tile_schema),
-        }
+    ) -> Option<PolygonPaint> {
+        Some(PolygonPaint {
+            color: self.fill_color.get_value(current_resolution, tile_schema)?,
+        })
     }
 }
 
@@ -380,22 +382,22 @@ pub struct VtTextStyle {
 impl VtTextStyle {
     /// This method returns the value of the struct `TextStyle` on the basis of the
     /// current resolution level.
-    pub fn get_value(self, current_resolution: f64, tile_schema: &TileSchema) -> TextStyle {
-        TextStyle {
+    pub fn get_value(self, current_resolution: f64, tile_schema: &TileSchema) -> Option<TextStyle> {
+        Some(TextStyle {
             font_family: self.font_family,
-            font_size: self.font_size.get_value(current_resolution, tile_schema),
-            font_color: self.font_color.get_value(current_resolution, tile_schema),
+            font_size: self.font_size.get_value(current_resolution, tile_schema)?,
+            font_color: self.font_color.get_value(current_resolution, tile_schema)?,
             horizontal_alignment: self.horizontal_alignment,
             vertical_alignment: self.vertical_alignment,
             weight: self.weight,
             style: self.style,
             outline_width: self
                 .outline_width
-                .get_value(current_resolution, tile_schema),
+                .get_value(current_resolution, tile_schema)?,
             outline_color: self
                 .outline_color
-                .get_value(current_resolution, tile_schema),
-        }
+                .get_value(current_resolution, tile_schema)?,
+        })
     }
 }
 
