@@ -65,7 +65,8 @@ impl VtProcessor {
 
                 match &feature.geometry {
                     MvtGeometry::Point(points) => {
-                        let Some(paint) = Self::get_point_symbol(rule, lod_resolution, feature)
+                        let Some(paint) =
+                            Self::get_point_symbol(rule, lod_resolution, feature, tile_schema)
                         else {
                             continue;
                         };
@@ -91,7 +92,9 @@ impl VtProcessor {
                         }
                     }
                     MvtGeometry::LineString(contours) => {
-                        if let Some(paint) = Self::get_line_symbol(rule, lod_resolution, feature) {
+                        if let Some(paint) =
+                            Self::get_line_symbol(rule, lod_resolution, feature, tile_schema)
+                        {
                             for contour in contours.contours() {
                                 bundle.add_line(
                                     &galileo_types::impls::Contour::new(
@@ -108,7 +111,8 @@ impl VtProcessor {
                         }
                     }
                     MvtGeometry::Polygon(polygons) => {
-                        if let Some(paint) = Self::get_polygon_symbol(rule, lod_resolution, feature)
+                        if let Some(paint) =
+                            Self::get_polygon_symbol(rule, lod_resolution, feature, tile_schema)
                         {
                             for polygon in polygons.polygons() {
                                 bundle.add_polygon(
@@ -130,14 +134,15 @@ impl VtProcessor {
         rule: &'a StyleRule,
         resolution: f64,
         feature: &MvtFeature,
+        tile_schema: &TileSchema,
     ) -> Option<PointPaint<'a>> {
         rule.symbol
             .point()
-            .map(|symbol| symbol.to_paint(resolution, feature))
+            .and_then(|symbol| symbol.to_paint(resolution, feature, tile_schema))
             .or_else(|| {
                 rule.symbol
                     .label()
-                    .and_then(|symbol| Self::format_label(symbol, resolution, feature))
+                    .and_then(|symbol| Self::format_label(symbol, resolution, feature, tile_schema))
             })
     }
 
@@ -145,6 +150,7 @@ impl VtProcessor {
         label_symbol: &VectorTileLabelSymbol,
         resolution: f64,
         feature: &MvtFeature,
+        tile_schema: &TileSchema,
     ) -> Option<PointPaint<'a>> {
         let re = Regex::new("\\{(?<name>.+)}").ok()?;
         let mut text = label_symbol.pattern.to_string();
@@ -160,7 +166,10 @@ impl VtProcessor {
         }
         Some(PointPaint::label_owned(
             text,
-            label_symbol.text_style.clone().get_value(resolution),
+            label_symbol
+                .text_style
+                .clone()
+                .get_value(resolution, tile_schema)?,
         ))
     }
 
@@ -168,18 +177,22 @@ impl VtProcessor {
         rule: &StyleRule,
         resolution: f64,
         feature: &MvtFeature,
+        tile_schema: &TileSchema,
     ) -> Option<LinePaint> {
-        rule.symbol.line().map(|s| s.to_paint(resolution, feature))
+        rule.symbol
+            .line()
+            .and_then(|s| s.to_paint(resolution, feature, tile_schema))
     }
 
     fn get_polygon_symbol(
         rule: &StyleRule,
         resolution: f64,
         feature: &MvtFeature,
+        tile_schema: &TileSchema,
     ) -> Option<PolygonPaint> {
         rule.symbol
             .polygon()
-            .map(|s| s.to_paint(resolution, feature))
+            .and_then(|s| s.to_paint(resolution, feature, tile_schema))
     }
 
     fn transform_polygon(mvt_polygon: &MvtPolygon, tile_resolution: f64) -> Polygon<Point3> {

@@ -62,7 +62,7 @@ pub struct TileSchema {
 
 pub struct Lod {
     resolution: f64,
-    z_index: u32,
+    pub(crate) z_index: u32,
 }
 
 impl TileSchema {
@@ -188,7 +188,7 @@ impl TileSchema {
     }
 
     /// Select a level of detail for the given resolution.
-    fn select_lod(&self, resolution: f64) -> Option<Lod> {
+    pub(crate) fn select_lod(&self, resolution: f64) -> Option<Lod> {
         if !resolution.is_finite() || self.lods.is_empty() {
             return None;
         }
